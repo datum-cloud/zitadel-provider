@@ -148,10 +148,20 @@ spec:
       - name: nginx-proxy-config
         configMap:
           name: nginx-proxy-config
+      - name: zitadel-admin-sa
+        secret:
+          secretName: zitadel-admin-sa
+          # optional: machinekeyWriter creates this secret after Zitadel is up;
+          # marking it optional breaks the circular startup dependency while still
+          # letting the kubelet populate the volume once the secret appears.
+          optional: true
 
     extraVolumeMounts:
       - name: zitadel-tls
         mountPath: /etc/zitadel/tls
+        readOnly: true
+      - name: zitadel-admin-sa
+        mountPath: /etc/zitadel/auth
         readOnly: true
 
     # actions-server sidecar: mirrors the production pattern from datum-infra.
@@ -164,6 +174,13 @@ spec:
           - actions-server
           - --addr=127.0.0.1:8888
           - --disable-signature-validation=true
+          - --zitadel-issuer=https://zitadel.zitadel-system.svc.cluster.local:443
+          - --zitadel-api=zitadel.zitadel-system.svc.cluster.local:443
+          - --zitadel-key=/etc/zitadel/auth/sa.json
+        volumeMounts:
+          - name: zitadel-admin-sa
+            mountPath: /etc/zitadel/auth
+            readOnly: true
 
       # nginx reverse proxy: terminates TLS on port 9443 (the service targetPort)
       # and routes /ui/v2/login to the login UI service, everything else to Zitadel.

@@ -2,18 +2,23 @@ package httpactionsserver
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
 	iammiloapiscomv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -28,6 +33,19 @@ type ServerConfig struct {
 	Kubeconfig                 string
 	SigningKey                 string
 	DisableSignatureValidation bool
+	// SuspiciousLoginEmailTemplate is the name of the EmailTemplate cluster resource
+	// used to notify users of suspicious login activity.
+	SuspiciousLoginEmailTemplate string
+	// NotificationNamespace is the namespace in which Email resources are created.
+	NotificationNamespace string
+	// GraphQLGatewayURL is the endpoint of the internal GraphQL gateway used
+	// for IP geolocation and user-agent parsing.
+	// When empty, those lookups are skipped and fallbacks are used instead.
+	GraphQLGatewayURL string
+	// GraphQLGatewayCACertFile is the path to a PEM-encoded CA certificate
+	// used to verify the gateway's TLS certificate. When empty the system
+	// cert pool is used (sufficient if the CA is already trusted by the OS).
+	GraphQLGatewayCACertFile string
 }
 
 type ValidateSignatureFunc func(payload []byte, header string, signingKey string) error
@@ -35,8 +53,12 @@ type ValidateSignatureFunc func(payload []byte, header string, signingKey string
 // NewServerConfig returns a config initialised with sensible defaults.
 func NewServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Addr:                       ":8082",
-		DisableSignatureValidation: false,
+		Addr:                         ":8082",
+		DisableSignatureValidation:   false,
+		SuspiciousLoginEmailTemplate: "emailtemplates.notification.miloapis.com-usersuspiciousemailtemplate",
+		NotificationNamespace:        "milo-system",
+		GraphQLGatewayURL:            "https://graphql-gateway.graphql-gateway.svc.cluster.local:4000/graphql",
+		GraphQLGatewayCACertFile:     "/etc/ssl/certs/datum-ca.crt",
 	}
 }
 
@@ -45,16 +67,76 @@ type Server struct {
 	config            *ServerConfig
 	k8sClient         client.Client
 	validateSignature ValidateSignatureFunc
+
+	// httpClient is used for outbound HTTP calls (e.g. geolocation lookups).
+	httpClient *http.Client
+
+	// mu guards zitadelClient, which may be installed asynchronously by a
+	// background initializer after the server has already started.
+	mu            sync.RWMutex
+	zitadelClient zitadel.API
+}
+
+// SetZitadelClient atomically installs the Zitadel SDK client. It is safe for
+// concurrent use and is called by the background initializer once Zitadel
+// becomes reachable.
+func (s *Server) SetZitadelClient(c zitadel.API) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.zitadelClient = c
+}
+
+// zitadelAPI returns the current Zitadel SDK client, or nil if it has not been
+// initialized yet.
+func (s *Server) zitadelAPI() zitadel.API {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.zitadelClient
 }
 
 // NewServer creates a new HTTP actions server instance
-func NewServer(cfg *ServerConfig, k8sClient client.Client, validateSignatureFunc ValidateSignatureFunc) *Server {
+func NewServer(cfg *ServerConfig, k8sClient client.Client, validateSignatureFunc ValidateSignatureFunc, zitadelClient zitadel.API) *Server {
 	log := logf.Log.WithName("httpactionsserver")
 	log.Info("Creating new HTTP actions server", "addr", cfg.Addr, "tlsEnabled", cfg.CertFile != "" && cfg.KeyFile != "")
 	return &Server{
 		config:            cfg,
 		k8sClient:         k8sClient,
 		validateSignature: validateSignatureFunc,
+		zitadelClient:     zitadelClient,
+		httpClient:        buildHTTPClient(log, cfg.GraphQLGatewayCACertFile),
+	}
+}
+
+// buildHTTPClient creates an http.Client that trusts the cluster CA cert at
+// caCertFile (if the file exists) in addition to the system cert pool. When
+// the file is absent the default system pool is used, which is correct for
+// environments where the CA is already trusted at the OS level.
+func buildHTTPClient(log interface{ Info(string, ...any) }, caCertFile string) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	if caCertFile != "" {
+		pem, err := os.ReadFile(caCertFile)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Info("Could not read gateway CA cert file; using system cert pool", "file", caCertFile, "err", err)
+			}
+		} else {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			if pool.AppendCertsFromPEM(pem) {
+				transport.TLSClientConfig = &tls.Config{RootCAs: pool}
+				log.Info("Loaded gateway CA cert", "file", caCertFile)
+			} else {
+				log.Info("gateway CA cert file contained no valid PEM blocks; using system cert pool", "file", caCertFile)
+			}
+		}
+	}
+
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
 	}
 }
 
@@ -98,6 +180,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/actions/create-user-account", s.createUserAccountHandler)
 	mux.HandleFunc("/v1/actions/customize-jwt", s.customizeJwtHandler)
 	mux.HandleFunc("/v1/actions/idp-intent-succeeded", s.idpIntentSucceededHandler)
+	mux.HandleFunc("/v1/actions/session-added", s.sessionAddedHandler)
 
 	srv := &http.Server{
 		Addr:    s.config.Addr,
