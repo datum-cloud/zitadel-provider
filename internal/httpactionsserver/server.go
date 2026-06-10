@@ -304,12 +304,18 @@ func (s *Server) customizeJwtHandler(w http.ResponseWriter, r *http.Request) {
 		log.V(1).Info("Processing machine user", "email", email)
 	}
 
+	membershipList := &iammiloapiscomv1alpha1.GroupMembershipList{}
+	if err := s.k8sClient.List(r.Context(), membershipList, client.MatchingFields{"spec.userRef.name": request.UserInfo.Sub}); err != nil {
+		log.Error(err, "failed to list group memberships, omitting groups claim", "userSub", request.UserInfo.Sub)
+	}
+
 	resp := &CustomizeJwtHandlerResponse{
 		SetUserMetadata: []*Metadata{
 			{Key: "key", Value: []byte("value")},
 		},
 		AppendClaims: []*AppendClaim{
 			{Key: "email", Value: email},
+			{Key: "groups", Value: activeGroupNames(membershipList)},
 		},
 	}
 
@@ -399,6 +405,23 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 	log.Info("Processed idpintent.succeeded", "idpProvider", idpProvider, "avatarURL", avatarURL, "userId", req.EventPayload.UserID)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("success"))
+}
+
+// activeGroupNames returns the group names from memberships that have Ready=True.
+func activeGroupNames(list *iammiloapiscomv1alpha1.GroupMembershipList) []string {
+	var names []string
+	for _, m := range list.Items {
+		for _, cond := range m.Status.Conditions {
+			if cond.Type != "Ready" {
+				continue
+			}
+			if cond.Status != metav1.ConditionTrue {
+				continue
+			}
+			names = append(names, m.Spec.GroupRef.Name)
+		}
+	}
+	return names
 }
 
 // parseIDPUserData inspects the raw json of idpUser (base64 decoded) and
