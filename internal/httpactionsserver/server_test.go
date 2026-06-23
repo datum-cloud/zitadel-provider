@@ -3,6 +3,7 @@ package httpactionsserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -770,5 +771,66 @@ func TestParseDeviceAndBrowser(t *testing.T) {
 		if gotBrowser != tt.wantBrowser {
 			t.Errorf("parseBrowser(%q) = %q, want %q", tt.ua, gotBrowser, tt.wantBrowser)
 		}
+	}
+}
+
+// TestIdpIntentSucceededHandler covers the fresh-identity guard: a first-time external-IdP
+// sign-up arrives with an empty userId (no milo User exists yet). The handler must SKIP with
+// 200 instead of 404 — a failed action aborts the idpintent.succeeded flow and breaks sign-up.
+// The unexpected-event and missing-idpUser cases pin the surrounding guards.
+func TestIdpIntentSucceededHandler(t *testing.T) {
+	// Signature validation is injected; a no-op keeps the test focused on the handler logic.
+	noopValidate := func(_ []byte, _ string, _ string) error { return nil }
+
+	type eventPayload struct {
+		IDPUser string `json:"idpUser"`
+		UserID  string `json:"userId,omitempty"`
+	}
+	type request struct {
+		EventType    string       `json:"event_type"`
+		EventPayload eventPayload `json:"event_payload"`
+	}
+
+	idpUser := base64.StdEncoding.EncodeToString([]byte(`{"User":{"email":"new@example.com"}}`))
+
+	tests := []struct {
+		name       string
+		body       request
+		wantStatus int
+	}{
+		{
+			name:       "fresh identity (empty userId) is skipped, not 404",
+			body:       request{EventType: "idpintent.succeeded", EventPayload: eventPayload{IDPUser: idpUser, UserID: ""}},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "unexpected event type is rejected",
+			body:       request{EventType: "user.human.added", EventPayload: eventPayload{IDPUser: idpUser, UserID: "user-123"}},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "missing idpUser is rejected",
+			body:       request{EventType: "idpintent.succeeded", EventPayload: eventPayload{IDPUser: "", UserID: "user-123"}},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewServer(NewServerConfig(), fake.NewClientBuilder().WithScheme(newTestScheme()).Build(), noopValidate, nil)
+
+			raw, err := json.Marshal(tc.body)
+			if err != nil {
+				t.Fatalf("marshal body: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/actions/idp-intent-succeeded", bytes.NewReader(raw))
+			rec := httptest.NewRecorder()
+
+			s.idpIntentSucceededHandler(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d (body: %q)", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+		})
 	}
 }

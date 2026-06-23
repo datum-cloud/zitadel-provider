@@ -443,6 +443,17 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// A fresh external-IdP identity (first-time sign-up) has no milo User yet, so the payload
+	// carries an empty userId. This handler only ENRICHES an existing User (avatar URL +
+	// last-login provider), so there is nothing to do — skip with 200 rather than 404. Returning
+	// an error here fails the idpintent.succeeded action and aborts the whole sign-up; enrichment
+	// instead runs on the user's next login, once the User resource exists.
+	if req.EventPayload.UserID == "" {
+		log.Info("idpintent.succeeded: no user yet (fresh identity), skipping enrichment")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	// Decode idpUser JSON
 	raw, err := base64.StdEncoding.DecodeString(req.EventPayload.IDPUser)
 	if err != nil {
