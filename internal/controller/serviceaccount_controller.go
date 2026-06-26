@@ -129,7 +129,7 @@ func (r *ServiceAccountController) Reconcile(ctx context.Context, req mcreconcil
 		return ctrl.Result{}, nil
 	}
 
-	projectName := strings.TrimPrefix(req.ClusterName, "/")
+	projectName := strings.TrimPrefix(string(req.ClusterName), "/")
 	orgID := pkgzitadel.OrgIDForProject(projectName)
 	log.V(2).Info("Checking if Zitadel organization exists", "orgID", orgID)
 	org, err := r.Zitadel.GetOrganization(ctx, orgID)
@@ -257,6 +257,6 @@ func (r *ServiceAccountController) SetupWithManager(mgr mcmanager.Manager) error
 // computeEmailAddress computes the email address for a service account.
 // EmailAddress is {metadata.name}@{project-name}.{EmailAddressSuffix}
 func (r *ServiceAccountController) computeEmailAddress(serviceAccount *iammiloapiscomv1alpha1.ServiceAccount, req mcreconcile.Request) string {
-	projectName := strings.TrimPrefix(req.ClusterName, "/")
+	projectName := strings.TrimPrefix(string(req.ClusterName), "/")
 	return serviceAccount.GetName() + "@" + projectName + "." + r.EmailAddressSuffix
 }

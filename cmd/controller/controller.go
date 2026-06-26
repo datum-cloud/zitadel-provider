@@ -443,12 +443,12 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		os.Exit(1)
 	}
 
-	// Setup UserDeactivationController on core control plane manager
-	if err = (&controller.UserDeactivationController{
+	// Setup PlatformAccessController on core control plane manager
+	if err = (&controller.PlatformAccessController{
 		Client:  coreControlPlaneMgr.GetClient(),
 		Zitadel: zitadelHtppClient,
 	}).SetupWithManager(coreControlPlaneMgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UserDeactivation")
+		setupLog.Error(err, "unable to create controller", "controller", "PlatformAccess")
 		os.Exit(1)
 	}
 
@@ -489,11 +489,6 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		})
 	}
 
-	setupLog.Info("starting cluster discovery provider")
-	g.Go(func() error {
-		return ignoreCanceled(provider.Run(ctx, mgr))
-	})
-
 	setupLog.Info("starting multicluster manager")
 	g.Go(func() error {
 		return ignoreCanceled(mgr.Start(ctx))
@@ -509,7 +504,7 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 
 type runnableProvider interface {
 	multicluster.Provider
-	Run(context.Context, mcmanager.Manager) error
+	multicluster.ProviderRunnable
 }
 
 // coreControlPlaneRunnable implements multicluster-runtime Runnable interface
@@ -525,7 +520,7 @@ func (r *coreControlPlaneRunnable) Start(ctx context.Context) error {
 	return r.coreControlPlaneMgr.Start(ctx)
 }
 
-func (r *coreControlPlaneRunnable) Engage(ctx context.Context, clusterName string, cluster cluster.Cluster) error {
+func (r *coreControlPlaneRunnable) Engage(ctx context.Context, clusterName multicluster.ClusterName, cluster cluster.Cluster) error {
 	// No-op: this runnable doesn't manage clusters
 	return nil
 }
@@ -538,11 +533,14 @@ type wrappedSingleClusterProvider struct {
 	cluster cluster.Cluster
 }
 
-func (p *wrappedSingleClusterProvider) Run(ctx context.Context, mgr mcmanager.Manager) error {
-	if err := mgr.Engage(ctx, "single", p.cluster); err != nil {
+func (p *wrappedSingleClusterProvider) Start(ctx context.Context, aware multicluster.Aware) error {
+	if err := aware.Engage(ctx, "single", p.cluster); err != nil {
 		return err
 	}
-	return p.Provider.(runnableProvider).Run(ctx, mgr)
+	if pr, ok := p.Provider.(multicluster.ProviderRunnable); ok {
+		return pr.Start(ctx, aware)
+	}
+	return nil
 }
 
 func initializeClusterDiscovery(
