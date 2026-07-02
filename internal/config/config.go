@@ -104,6 +104,10 @@ type ControllerConfig struct {
 	// kubeconfig when an empty value is provided.
 	CoreControlPlaneKubeconfig string
 
+	// Interval between Zitadel user sweeps that provision missing User
+	// resources on the core control plane. Zero disables the sweeper.
+	UserSweepInterval time.Duration
+
 	// Zitadel connection details
 	Zitadel ZitadelConfig
 }
@@ -111,8 +115,9 @@ type ControllerConfig struct {
 // NewControllerConfig returns a ControllerConfig with sensible defaults
 func NewControllerConfig() *ControllerConfig {
 	return &ControllerConfig{
-		ProbeAddr:   ":8081",
-		EnableHTTP2: false,
+		ProbeAddr:         ":8081",
+		EnableHTTP2:       false,
+		UserSweepInterval: 10 * time.Minute,
 		LeaderElection: LeaderElectionConfig{
 			Enabled:         false,
 			ID:              "auth-provider-zitadel-leader",
