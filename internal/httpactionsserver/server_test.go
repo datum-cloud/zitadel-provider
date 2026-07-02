@@ -13,12 +13,14 @@ import (
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	notificationv1alpha1 "go.miloapis.com/milo/pkg/apis/notification/v1alpha1"
 
+	"go.miloapis.com/auth-provider-zitadel/internal/userprovision"
 	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
 )
 
@@ -701,6 +703,95 @@ func TestSendSuspiciousLoginEmail(t *testing.T) {
 			t.Error("expected success log entry, got none")
 		}
 	})
+}
+
+func TestCreateUserAccountHandler(t *testing.T) {
+	const eventPayloadBody = `{
+		"aggregateID": "362926680773230861",
+		"aggregateType": "user",
+		"resourceOwner": "org-1",
+		"instanceID": "inst-1",
+		"version": "v2",
+		"sequence": 1,
+		"event_type": "user.human.added",
+		"created_at": "2026-06-05T12:00:00Z",
+		"userID": "362926680773230861",
+		"event_payload": {
+			"userName": "jane",
+			"firstName": "Jane",
+			"lastName": "Doe",
+			"displayName": "Jane Doe",
+			"email": "jane@example.com"
+		}
+	}`
+
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+		seed       []client.Object
+	}{
+		{
+			name:       "creates user returns 201",
+			method:     http.MethodPost,
+			body:       eventPayloadBody,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "duplicate user returns 200",
+			method:     http.MethodPost,
+			body:       eventPayloadBody,
+			wantStatus: http.StatusOK,
+			seed: []client.Object{
+				userprovision.NewUser("362926680773230861", "jane@example.com", "Jane", "Doe"),
+			},
+		},
+		{
+			name:       "method not allowed",
+			method:     http.MethodGet,
+			body:       "",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "unsupported event type",
+			method:     http.MethodPost,
+			body:       `{"event_type":"user.machine.added"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8s := fake.NewClientBuilder().
+				WithScheme(newTestScheme()).
+				WithObjects(tt.seed...).
+				Build()
+			s := &Server{
+				config:            NewServerConfig(),
+				k8sClient:         k8s,
+				validateSignature: func([]byte, string, string) error { return nil },
+			}
+
+			req := httptest.NewRequest(tt.method, "/v1/actions/create-user-account", bytes.NewBufferString(tt.body))
+			rr := httptest.NewRecorder()
+			s.createUserAccountHandler(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("expected status %d, got %d (body: %s)", tt.wantStatus, rr.Code, rr.Body.String())
+			}
+
+			if tt.wantStatus == http.StatusCreated || tt.wantStatus == http.StatusOK {
+				got := &iamv1alpha1.User{}
+				if err := k8s.Get(context.Background(), client.ObjectKey{Name: "362926680773230861"}, got); err != nil {
+					t.Fatalf("expected User resource to exist: %v", err)
+				}
+				if got.Spec.Email != "jane@example.com" {
+					t.Errorf("expected email %q, got %q", "jane@example.com", got.Spec.Email)
+				}
+			}
+		})
+	}
 }
 
 func TestParseDeviceAndBrowser(t *testing.T) {
