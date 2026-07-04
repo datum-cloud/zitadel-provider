@@ -463,11 +463,11 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		os.Exit(1)
 	}
 
-	// Ensure every eligible Zitadel human user has a User resource; runs
+	// Ensure every Zitadel human user has a User resource; runs
 	// only after leader election via the core control plane manager.
 	if err := coreControlPlaneMgr.Add(&controller.UserSweeper{
 		Client:   coreControlPlaneMgr.GetClient(),
-		Zitadel:  zitadelHtppClient,
+		Zitadel:  zitadelSDKClient,
 		Interval: cfg.UserSweepInterval,
 	}); err != nil {
 		setupLog.Error(err, "unable to add user sweeper")

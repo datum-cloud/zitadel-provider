@@ -3,20 +3,16 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	iammiloapiscomv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"go.miloapis.com/auth-provider-zitadel/internal/userprovision"
-	"go.miloapis.com/auth-provider-zitadel/internal/zitadel"
+	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
 )
 
 const sweepPageSize = 100
@@ -48,15 +44,22 @@ func init() {
 	metrics.Registry.MustRegister(sweepScanned, sweepMissing, sweepCreated, sweepErrors, sweepLastSuccess)
 }
 
+// ZitadelUserLister is the narrow slice of the pkg/zitadel API the sweeper
+// needs. Eligibility is decided server-side: every human user, regardless of
+// state, must have a Milo counterpart; machine users are excluded.
+type ZitadelUserLister interface {
+	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]zitadel.User, error)
+}
+
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get;list;watch;create
 
-// UserSweeper periodically ensures every eligible Zitadel human user has a
-// User resource on the core control plane. Create-only: it never deletes or
+// UserSweeper periodically ensures every Zitadel human user has a User
+// resource on the core control plane. Create-only: it never deletes or
 // mutates existing resources — deletion authority stays with UserController's
 // finalizer flow.
 type UserSweeper struct {
 	Client   client.Client
-	Zitadel  *zitadel.Client
+	Zitadel  ZitadelUserLister
 	Interval time.Duration
 }
 
@@ -89,68 +92,51 @@ func (s *UserSweeper) Start(ctx context.Context) error {
 
 func (s *UserSweeper) sweepOnce(ctx context.Context) error {
 	log := logf.FromContext(ctx).WithName("user-sweeper")
-	offset := 0
+
+	// One List per sweep: the manager client serves it from the shared
+	// informer cache, so diffing against this set avoids a per-user Get.
+	// Users created between snapshot and Create are covered by EnsureUser
+	// treating AlreadyExists as success.
+	var userList iammiloapiscomv1alpha1.UserList
+	if err := s.Client.List(ctx, &userList); err != nil {
+		sweepErrors.Inc()
+		return fmt.Errorf("list existing user resources: %w", err)
+	}
+	existing := make(map[string]struct{}, len(userList.Items))
+	for i := range userList.Items {
+		existing[userList.Items[i].Name] = struct{}{}
+	}
+
+	var offset uint64
 	for {
-		resp, err := s.Zitadel.ListUsers(ctx, zitadel.ListUsersRequest{
-			Query: &zitadel.SearchQuery{Offset: strconv.Itoa(offset), Limit: sweepPageSize, Asc: true},
-			Queries: []zitadel.UserSearchQuery{
-				{TypeQuery: &zitadel.TypeQuery{Type: zitadel.UserTypeHuman}},
-			},
-		})
+		users, err := s.Zitadel.ListHumanUsers(ctx, offset, sweepPageSize)
 		if err != nil {
 			sweepErrors.Inc()
 			return fmt.Errorf("list zitadel users (offset %d): %w", offset, err)
 		}
-		for i := range resp.Result {
-			u := &resp.Result[i]
-			if !eligibleForProvisioning(u) {
+		for i := range users {
+			u := &users[i]
+			sweepScanned.Inc()
+			if _, ok := existing[u.ID]; ok {
 				continue
 			}
-			sweepScanned.Inc()
-			if err := s.ensureUser(ctx, u, log); err != nil {
+			sweepMissing.Inc()
+			created, err := userprovision.EnsureUser(ctx, s.Client,
+				userprovision.NewUser(u.ID, u.Email, u.GivenName, u.FamilyName))
+			if err != nil {
 				sweepErrors.Inc()
-				return err
+				return fmt.Errorf("create user %s: %w", u.ID, err)
+			}
+			if created {
+				sweepCreated.Inc()
+				log.Info("Provisioned missing User resource", "zitadelUserId", u.ID, "email", u.Email)
 			}
 		}
-		if len(resp.Result) < sweepPageSize {
+		if len(users) < sweepPageSize {
 			break
 		}
-		offset += len(resp.Result)
+		offset += uint64(len(users))
 	}
 	sweepLastSuccess.SetToCurrentTime()
-	return nil
-}
-
-// eligibleForProvisioning is the security boundary deciding which Zitadel
-// users MUST have a User resource (and therefore fraud screening).
-func eligibleForProvisioning(u *zitadel.User) bool {
-	return u.Human != nil && u.State == zitadel.UserStateActive
-}
-
-func (s *UserSweeper) ensureUser(ctx context.Context, u *zitadel.User, log logr.Logger) error {
-	err := s.Client.Get(ctx, types.NamespacedName{Name: u.UserID}, &iammiloapiscomv1alpha1.User{})
-	if err == nil {
-		return nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get user %s: %w", u.UserID, err)
-	}
-	sweepMissing.Inc()
-
-	var email, given, family string
-	if u.Human.Email != nil {
-		email = u.Human.Email.Email
-	}
-	if u.Human.Profile != nil {
-		given, family = u.Human.Profile.GivenName, u.Human.Profile.FamilyName
-	}
-	created, err := userprovision.EnsureUser(ctx, s.Client, userprovision.NewUser(u.UserID, email, given, family))
-	if err != nil {
-		return fmt.Errorf("create user %s: %w", u.UserID, err)
-	}
-	if created {
-		sweepCreated.Inc()
-		log.Info("Provisioned missing User resource", "zitadelUserId", u.UserID, "email", email)
-	}
 	return nil
 }
