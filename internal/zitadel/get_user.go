@@ -48,23 +48,7 @@ type MachineUserData struct{}
 
 // HumanUserData represents human-specific user data.
 // This can be extended with human-specific fields as needed.
-type HumanUserData struct {
-	Profile *HumanProfile `json:"profile,omitempty"`
-	Email   *HumanEmail   `json:"email,omitempty"`
-}
-
-// HumanProfile contains profile information for a human user.
-type HumanProfile struct {
-	GivenName   string `json:"givenName"`
-	FamilyName  string `json:"familyName"`
-	DisplayName string `json:"displayName"`
-}
-
-// HumanEmail contains the email address of a human user.
-type HumanEmail struct {
-	Email      string `json:"email"`
-	IsVerified bool   `json:"isVerified"`
-}
+type HumanUserData struct{}
 
 // GetUser retrieves user information by user ID.
 // It wraps the "GET /v2/users/:userId" REST endpoint.
