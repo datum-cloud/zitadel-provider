@@ -13,6 +13,7 @@ import (
 	"github.com/zitadel/zitadel-go/v3/pkg/client/middleware"
 	filterv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/filter/v2"
 	idpv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/idp/v2"
+	objectv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/object/v2"
 	orgv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/org/v2"
 	sessionv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/session/v2"
 	userv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/user/v2"
@@ -541,6 +542,47 @@ func (c *SDKClient) GetUserByID(ctx context.Context, userID string) (*User, erro
 	}
 	klog.V(2).Infof("GetUserByID: user id=%q found (username=%q)", result.ID, result.Username)
 	return result, nil
+}
+
+// ListHumanUsers returns one page of human users across all organizations,
+// filtered server-side to TYPE_HUMAN and ordered ascending for stable
+// pagination. Machine users are excluded; user state is intentionally NOT
+// filtered — every human user in Zitadel is returned regardless of state.
+func (c *SDKClient) ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]User, error) {
+	klog.V(2).Infof("ListHumanUsers: listing human users offset=%d limit=%d", offset, limit)
+
+	resp, err := c.user.ListUsers(ctx, &userv2.ListUsersRequest{
+		Query: &objectv2.ListQuery{Offset: offset, Limit: limit, Asc: true},
+		Queries: []*userv2.SearchQuery{
+			{Query: &userv2.SearchQuery_TypeQuery{
+				TypeQuery: &userv2.TypeQuery{Type: userv2.Type_TYPE_HUMAN},
+			}},
+		},
+	})
+	if err != nil {
+		klog.Errorf("ListHumanUsers: failed to list users: %v", err)
+		return nil, fmt.Errorf("list human users: %w", err)
+	}
+
+	users := make([]User, 0, len(resp.GetResult()))
+	for _, user := range resp.GetResult() {
+		// Defensive: the server-side filter should only return humans.
+		human := user.GetHuman()
+		if human == nil {
+			continue
+		}
+		users = append(users, User{
+			ID:         user.GetUserId(),
+			Username:   localIdentityUsername(user),
+			Email:      human.GetEmail().GetEmail(),
+			State:      user.GetState().String(),
+			GivenName:  human.GetProfile().GetGivenName(),
+			FamilyName: human.GetProfile().GetFamilyName(),
+		})
+	}
+
+	klog.V(2).Infof("ListHumanUsers: found %d human user(s) at offset=%d", len(users), offset)
+	return users, nil
 }
 
 // DeleteUser removes a Zitadel user.

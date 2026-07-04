@@ -51,6 +51,9 @@ type User struct {
 	Username string
 	Email    string
 	State    string // e.g. "ACTIVE", "INACTIVE"
+	// GivenName and FamilyName carry the human profile; empty for machine users.
+	GivenName  string
+	FamilyName string
 }
 
 // Organization represents a Zitadel organization.
@@ -82,6 +85,7 @@ type API interface {
 
 	// user management
 	GetUserByID(ctx context.Context, userID string) (*User, error)
+	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]User, error)
 	GetMachineUserByUsername(ctx context.Context, orgID, username string) (*User, error)
 	AddMachineUserInOrganization(ctx context.Context, orgID, userID, username, displayName string) (createdUserID string, err error)
 	DeleteUser(ctx context.Context, userID string) error
