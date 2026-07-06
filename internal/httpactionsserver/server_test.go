@@ -772,3 +772,77 @@ func TestParseDeviceAndBrowser(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIDPUserData(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		raw      string
+		provider iamv1alpha1.AuthProvider
+		avatar   string
+		wantErr  bool
+	}{
+		{
+			name:     "google nested picture",
+			raw:      `{"User":{"picture":"https://lh3.googleusercontent.com/a/example"}}`,
+			provider: iamv1alpha1.AuthProviderGoogle,
+			avatar:   "https://lh3.googleusercontent.com/a/example",
+		},
+		{
+			name:     "github nested avatar_url",
+			raw:      `{"User":{"avatar_url":"https://avatars.githubusercontent.com/u/1"}}`,
+			provider: iamv1alpha1.AuthProviderGitHub,
+			avatar:   "https://avatars.githubusercontent.com/u/1",
+		},
+		{
+			name:     "github top-level avatar_url",
+			raw:      `{"avatar_url":"https://avatars.githubusercontent.com/u/2"}`,
+			provider: iamv1alpha1.AuthProviderGitHub,
+			avatar:   "https://avatars.githubusercontent.com/u/2",
+		},
+		{
+			name:    "unknown provider",
+			raw:     `{"email":"nobody@example.com"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			provider, avatar, err := parseIDPUserData([]byte(tt.raw))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if provider != tt.provider {
+				t.Fatalf("provider = %q, want %q", provider, tt.provider)
+			}
+			if avatar != tt.avatar {
+				t.Fatalf("avatar = %q, want %q", avatar, tt.avatar)
+			}
+		})
+	}
+}
+
+func TestMiloUserIDFromIdpIntent(t *testing.T) {
+	t.Parallel()
+
+	req := IdpIntentSucceededRequest{}
+	req.EventPayload.UserID = "payload-id"
+	if got := miloUserIDFromIdpIntent(req); got != "payload-id" {
+		t.Fatalf("got %q, want payload-id", got)
+	}
+
+	req = IdpIntentSucceededRequest{UserID: "top-level-id"}
+	if got := miloUserIDFromIdpIntent(req); got != "top-level-id" {
+		t.Fatalf("got %q, want top-level-id", got)
+	}
+}

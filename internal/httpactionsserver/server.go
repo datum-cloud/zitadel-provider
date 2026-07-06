@@ -1,6 +1,7 @@
 package httpactionsserver
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
@@ -459,12 +461,22 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update user avatar URL and last login provider
+	userID := miloUserIDFromIdpIntent(req)
+	if userID == "" {
+		log.Error(nil, "User ID not found in idpintent.succeeded payload")
+		http.Error(w, "userID not found in payload", http.StatusBadRequest)
+		return
+	}
+
 	ctx := r.Context()
-	current := &iammiloapiscomv1alpha1.User{}
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Name: req.EventPayload.UserID}, current); err != nil {
-		log.Error(err, "Failed to get User resource", "userId", req.EventPayload.UserID)
-		http.Error(w, "user not found", http.StatusNotFound)
+	current, err := s.getUserWithRetry(ctx, userID)
+	if err != nil {
+		log.Error(err, "Failed to get User resource", "userId", userID)
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get user", http.StatusInternalServerError)
 		return
 	}
 	original := current.DeepCopy()
@@ -479,9 +491,39 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	log.Info("Processed idpintent.succeeded", "idpProvider", idpProvider, "avatarURL", avatarURL, "userId", req.EventPayload.UserID)
+	log.Info("Processed idpintent.succeeded", "idpProvider", idpProvider, "avatarURL", avatarURL, "userId", userID)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("success"))
+}
+
+const (
+	idpIntentUserLookupAttempts = 8
+	idpIntentUserLookupBaseWait = 250 * time.Millisecond
+)
+
+func miloUserIDFromIdpIntent(req IdpIntentSucceededRequest) string {
+	if id := req.EventPayload.UserID; id != "" {
+		return id
+	}
+	return req.UserID
+}
+
+func (s *Server) getUserWithRetry(ctx context.Context, userID string) (*iammiloapiscomv1alpha1.User, error) {
+	current := &iammiloapiscomv1alpha1.User{}
+	var err error
+
+	for attempt := 0; attempt < idpIntentUserLookupAttempts; attempt++ {
+		err = s.k8sClient.Get(ctx, client.ObjectKey{Name: userID}, current)
+		if err == nil {
+			return current, nil
+		}
+		if !apierrors.IsNotFound(err) || attempt == idpIntentUserLookupAttempts-1 {
+			return nil, err
+		}
+		time.Sleep(idpIntentUserLookupBaseWait * time.Duration(1<<attempt))
+	}
+
+	return nil, err
 }
 
 // parseIDPUserData inspects the raw json of idpUser (base64 decoded) and
@@ -496,6 +538,9 @@ func parseIDPUserData(raw []byte) (iammiloapiscomv1alpha1.AuthProvider, string, 
 	if user, ok := m["User"].(map[string]interface{}); ok {
 		if pic, ok := user["picture"].(string); ok && pic != "" {
 			return iammiloapiscomv1alpha1.AuthProviderGoogle, pic, nil
+		}
+		if avatar, ok := user["avatar_url"].(string); ok && avatar != "" {
+			return iammiloapiscomv1alpha1.AuthProviderGitHub, avatar, nil
 		}
 	}
 
