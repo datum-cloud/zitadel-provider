@@ -143,6 +143,10 @@ If a TLS certificate and key are provided, the server will start in HTTPS mode. 
 	cmd.Flags().StringVar(&cfg.GraphQLGatewayURL, "graphql-gateway-url", cfg.GraphQLGatewayURL, "GraphQL gateway endpoint used for IP geolocation (empty disables geolocation)")
 	cmd.Flags().StringVar(&cfg.GraphQLGatewayCACertFile, "graphql-gateway-ca-cert", cfg.GraphQLGatewayCACertFile, "Path to PEM CA cert used to verify the gateway TLS certificate")
 
+	// IDP intent avatar sync flags
+	cmd.Flags().IntVar(&cfg.IdpIntentUserLookupAttempts, "idp-intent-user-lookup-attempts", cfg.IdpIntentUserLookupAttempts, "Retry count when idpintent.succeeded arrives before the Milo User exists")
+	cmd.Flags().DurationVar(&cfg.IdpIntentUserLookupBaseWait, "idp-intent-user-lookup-base-wait", cfg.IdpIntentUserLookupBaseWait, "Initial backoff between idp-intent user lookup retries")
+
 	// Zitadel flags
 	cmd.Flags().StringVar(&zitadelIssuer, "zitadel-issuer", "", "Zitadel issuer URL (fallback: ZITADEL_ISSUER env)")
 	cmd.Flags().StringVar(&zitadelAPI, "zitadel-api", "", "Zitadel API base URL (fallback: ZITADEL_API env)")

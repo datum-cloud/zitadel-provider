@@ -32,12 +32,12 @@ spec:
           # The Zitadel username is the computed email: {name}@single.identity.miloapis.com
           SA_UID=$(kubectl get serviceaccounts.iam.miloapis.com sa-keys -o jsonpath='{.metadata.uid}')
           SA_USERNAME="sa-keys@single.identity.miloapis.com"
-          echo "$SA_USERNAME" > /tmp/sa_username.txt
+          echo "$SA_USERNAME" > /tmp/sa-keys-username.txt
 
           # Create Key 1
-          openssl genrsa -out /tmp/key1-priv.pem 2048 2>/dev/null
-          openssl rsa -in /tmp/key1-priv.pem -pubout -out /tmp/key1-pub.pem 2>/dev/null
-          KEY1_PUB_KEY=$(cat /tmp/key1-pub.pem)
+          openssl genrsa -out /tmp/sa-keys-key1-priv.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/sa-keys-key1-priv.pem -pubout -out /tmp/sa-keys-key1-pub.pem 2>/dev/null
+          KEY1_PUB_KEY=$(cat /tmp/sa-keys-key1-pub.pem)
 
           POST_RESPONSE_1=$(jq -n \
             --arg serviceAccountUserName "$SA_USERNAME" \
@@ -51,18 +51,18 @@ spec:
               -d @-)
 
           KEY1_ID=$(printf '%s\n' "$POST_RESPONSE_1" | jq -r '.status.authProviderKeyID')
-          if [ -z "$KEY1_ID" ] || [ "$KEY1_ID" == "null" ]; then
+          if [ -z "$KEY1_ID" ] || [ "$KEY1_ID" = "null" ]; then
             echo "ERROR: Failed to extract KEY1_ID from response:"
             printf '%s\n' "$POST_RESPONSE_1"
             exit 1
           fi
           echo "KEY1_ID: $KEY1_ID"
-          echo "$KEY1_ID" > /tmp/key1_id.txt
+          echo "$KEY1_ID" > /tmp/sa-keys-key1-id.txt
 
           # Create Key 2
-          openssl genrsa -out /tmp/key2-priv.pem 2048 2>/dev/null
-          openssl rsa -in /tmp/key2-priv.pem -pubout -out /tmp/key2-pub.pem 2>/dev/null
-          KEY2_PUB_KEY=$(cat /tmp/key2-pub.pem)
+          openssl genrsa -out /tmp/sa-keys-key2-priv.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/sa-keys-key2-priv.pem -pubout -out /tmp/sa-keys-key2-pub.pem 2>/dev/null
+          KEY2_PUB_KEY=$(cat /tmp/sa-keys-key2-pub.pem)
 
           POST_RESPONSE_2=$(jq -n \
             --arg serviceAccountUserName "$SA_USERNAME" \
@@ -76,20 +76,20 @@ spec:
               -d @-)
 
           KEY2_ID=$(printf '%s\n' "$POST_RESPONSE_2" | jq -r '.status.authProviderKeyID')
-          if [ -z "$KEY2_ID" ] || [ "$KEY2_ID" == "null" ]; then
+          if [ -z "$KEY2_ID" ] || [ "$KEY2_ID" = "null" ]; then
             echo "ERROR: Failed to extract KEY2_ID from response:"
             printf '%s\n' "$POST_RESPONSE_2"
             exit 1
           fi
           echo "KEY2_ID: $KEY2_ID"
-          echo "$KEY2_ID" > /tmp/key2_id.txt
+          echo "$KEY2_ID" > /tmp/sa-keys-key2-id.txt
 
   - name: list-and-verify-two-keys
     try:
     - script:
         content: |
           set -e
-          SA_USERNAME=$(cat /tmp/sa_username.txt)
+          SA_USERNAME=$(cat /tmp/sa-keys-username.txt)
 
           LIST_RESPONSE=$(curl -s -G "http://localhost:8001/apis/identity.miloapis.com/v1alpha1/serviceaccountkeys" \
             --data-urlencode "fieldSelector=spec.serviceAccountUserName=${SA_USERNAME}" \
@@ -110,7 +110,7 @@ spec:
     - script:
         content: |
           set -e
-          KEY1_ID=$(cat /tmp/key1_id.txt)
+          KEY1_ID=$(cat /tmp/sa-keys-key1-id.txt)
 
           # Delete Key 1. Target resource name is the keyID
           DELETE_RESPONSE=$(curl -s -X DELETE "http://localhost:8001/apis/identity.miloapis.com/v1alpha1/serviceaccountkeys/${KEY1_ID}" \
@@ -126,8 +126,8 @@ spec:
     - script:
         content: |
           set -e
-          SA_USERNAME=$(cat /tmp/sa_username.txt)
-          KEY2_ID=$(cat /tmp/key2_id.txt)
+          SA_USERNAME=$(cat /tmp/sa-keys-username.txt)
+          KEY2_ID=$(cat /tmp/sa-keys-key2-id.txt)
 
           LIST_RESPONSE=$(curl -s -G "http://localhost:8001/apis/identity.miloapis.com/v1alpha1/serviceaccountkeys" \
             --data-urlencode "fieldSelector=spec.serviceAccountUserName=${SA_USERNAME}" \
