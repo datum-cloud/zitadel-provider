@@ -48,6 +48,11 @@ type ServerConfig struct {
 	// used to verify the gateway's TLS certificate. When empty the system
 	// cert pool is used (sufficient if the CA is already trusted by the OS).
 	GraphQLGatewayCACertFile string
+	// IdpIntentUserLookupAttempts is how many times to retry fetching the Milo
+	// User when idpintent.succeeded arrives before user.human.added creates it.
+	IdpIntentUserLookupAttempts int
+	// IdpIntentUserLookupBaseWait is the initial backoff between those retries.
+	IdpIntentUserLookupBaseWait time.Duration
 }
 
 type ValidateSignatureFunc func(payload []byte, header string, signingKey string) error
@@ -61,6 +66,8 @@ func NewServerConfig() *ServerConfig {
 		NotificationNamespace:        "milo-system",
 		GraphQLGatewayURL:            "https://graphql-gateway.graphql-gateway.svc.cluster.local:4000/graphql",
 		GraphQLGatewayCACertFile:     "/etc/ssl/certs/datum-ca.crt",
+		IdpIntentUserLookupAttempts:  8,
+		IdpIntentUserLookupBaseWait:  250 * time.Millisecond,
 	}
 }
 
@@ -496,11 +503,6 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write([]byte("success"))
 }
 
-const (
-	idpIntentUserLookupAttempts = 8
-	idpIntentUserLookupBaseWait = 250 * time.Millisecond
-)
-
 func miloUserIDFromIdpIntent(req IdpIntentSucceededRequest) string {
 	if id := req.EventPayload.UserID; id != "" {
 		return id
@@ -512,15 +514,24 @@ func (s *Server) getUserWithRetry(ctx context.Context, userID string) (*iammiloa
 	current := &iammiloapiscomv1alpha1.User{}
 	var err error
 
-	for attempt := 0; attempt < idpIntentUserLookupAttempts; attempt++ {
+	attempts := s.config.IdpIntentUserLookupAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	baseWait := s.config.IdpIntentUserLookupBaseWait
+	if baseWait < 0 {
+		baseWait = 0
+	}
+
+	for attempt := 0; attempt < attempts; attempt++ {
 		err = s.k8sClient.Get(ctx, client.ObjectKey{Name: userID}, current)
 		if err == nil {
 			return current, nil
 		}
-		if !apierrors.IsNotFound(err) || attempt == idpIntentUserLookupAttempts-1 {
+		if !apierrors.IsNotFound(err) || attempt == attempts-1 {
 			return nil, err
 		}
-		time.Sleep(idpIntentUserLookupBaseWait * time.Duration(1<<attempt))
+		time.Sleep(baseWait * time.Duration(1<<attempt))
 	}
 
 	return nil, err
