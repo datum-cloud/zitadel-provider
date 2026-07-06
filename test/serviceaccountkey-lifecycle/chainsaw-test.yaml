@@ -55,7 +55,7 @@ spec:
           # Extract authProviderKeyID from the response status
           printf '%s\n' "$POST_RESPONSE"
           KEY_ID=$(printf '%s\n' "$POST_RESPONSE" | jq -r '.status.authProviderKeyID')
-          if [ -z "$KEY_ID" ] || [ "$KEY_ID" == "null" ]; then
+          if [ -z "$KEY_ID" ] || [ "$KEY_ID" = "null" ]; then
             echo "ERROR: Failed to extract authProviderKeyID. Response: $POST_RESPONSE"
             exit 1
           fi
@@ -89,7 +89,7 @@ spec:
             --data-urlencode "assertion=$(cat /tmp/jwt-deact.token)")
 
           ACCESS_TOKEN=$(printf '%s\n' "$RESPONSE" | jq -r '.access_token')
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
             echo "ERROR: Failed to obtain access token before deactivation. Response: $RESPONSE"
             exit 1
           fi
@@ -135,7 +135,7 @@ spec:
             --data-urlencode "assertion=$(cat /tmp/jwt-deact.token)")
 
           ERROR=$(printf '%s\n' "$RESPONSE" | jq -r '.error')
-          if [ "$ERROR" == "null" ] || [ -z "$ERROR" ]; then
+          if [ "$ERROR" = "null" ] || [ -z "$ERROR" ]; then
             echo "ERROR: Access token exchange did not fail as expected when deactivated! Response: $RESPONSE"
             exit 1
           fi
@@ -181,7 +181,7 @@ spec:
             --data-urlencode "assertion=$(cat /tmp/jwt-deact.token)")
 
           ACCESS_TOKEN=$(printf '%s\n' "$RESPONSE" | jq -r '.access_token')
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
             echo "ERROR: Failed to obtain access token after reactivation. Response: $RESPONSE"
             exit 1
           fi

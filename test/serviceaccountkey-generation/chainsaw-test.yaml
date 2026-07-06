@@ -29,7 +29,7 @@ spec:
           # Compute username
           SA_UID=$(kubectl get serviceaccounts.iam.miloapis.com sa-generation -o jsonpath='{.metadata.uid}')
           SA_USERNAME="sa-generation@single.identity.miloapis.com"
-          echo "$SA_USERNAME" > /tmp/sa_username.txt
+          echo "$SA_USERNAME" > /tmp/sa-generation-username.txt
 
           # Create Key without publicKey payload
           POST_RESPONSE=$(jq -n \
@@ -43,16 +43,16 @@ spec:
               -d @-)
 
           KEY_ID=$(printf '%s\n' "$POST_RESPONSE" | jq -r '.status.authProviderKeyID')
-          if [ -z "$KEY_ID" ] || [ "$KEY_ID" == "null" ]; then
+          if [ -z "$KEY_ID" ] || [ "$KEY_ID" = "null" ]; then
             echo "ERROR: Failed to extract authProviderKeyID from response:"
             printf '%s\n' "$POST_RESPONSE"
             exit 1
           fi
           echo "KEY_ID: $KEY_ID"
-          echo "$KEY_ID" > /tmp/gen_key_id.txt
+          echo "$KEY_ID" > /tmp/sa-generation-key-id.txt
 
           PRIVATE_KEY_JSON=$(printf '%s\n' "$POST_RESPONSE" | jq -r '.status.privateKey')
-          if [ -z "$PRIVATE_KEY_JSON" ] || [ "$PRIVATE_KEY_JSON" == "null" ]; then
+          if [ -z "$PRIVATE_KEY_JSON" ] || [ "$PRIVATE_KEY_JSON" = "null" ]; then
             echo "ERROR: Failed to extract generated privateKey from response payload:"
             printf '%s\n' "$POST_RESPONSE"
             exit 1
@@ -61,20 +61,20 @@ spec:
           # status.privateKey is the Datum credentials file format used by
           # datumctl. Support the same base64-or-raw fallback the old test had
           # in case transports re-encode the field.
-          printf '%s\n' "$PRIVATE_KEY_JSON" | base64 -d > /tmp/datum-credentials.json 2>/dev/null || printf '%s\n' "$PRIVATE_KEY_JSON" > /tmp/datum-credentials.json
+          printf '%s\n' "$PRIVATE_KEY_JSON" | base64 -d > /tmp/sa-generation-datum-credentials.json 2>/dev/null || printf '%s\n' "$PRIVATE_KEY_JSON" > /tmp/sa-generation-datum-credentials.json
 
           # Verify the Datum credentials file has all required fields.
-          CREDS_TYPE=$(jq -r '.type' /tmp/datum-credentials.json)
+          CREDS_TYPE=$(jq -r '.type' /tmp/sa-generation-datum-credentials.json)
           if [ "$CREDS_TYPE" != "datum_service_account" ]; then
             echo "ERROR: Expected credentials type 'datum_service_account', got '$CREDS_TYPE'"
-            cat /tmp/datum-credentials.json
+            cat /tmp/sa-generation-datum-credentials.json
             exit 1
           fi
           for field in client_id private_key_id private_key client_email; do
-            VALUE=$(jq -r ".${field}" /tmp/datum-credentials.json)
-            if [ -z "$VALUE" ] || [ "$VALUE" == "null" ]; then
+            VALUE=$(jq -r ".${field}" /tmp/sa-generation-datum-credentials.json)
+            if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
               echo "ERROR: Datum credentials missing required field: $field"
-              cat /tmp/datum-credentials.json
+              cat /tmp/sa-generation-datum-credentials.json
               exit 1
             fi
           done
@@ -83,7 +83,7 @@ spec:
           # zitadel-tools key2jwt (which expects Zitadel's shape) can sign a
           # JWT assertion from the generated private key in the next step.
           jq '{type: "serviceaccount", keyId: .private_key_id, key: .private_key, userId: .client_id}' \
-            /tmp/datum-credentials.json > /tmp/zitadel-key-gen.json
+            /tmp/sa-generation-datum-credentials.json > /tmp/sa-generation-zitadel-key.json
 
           echo "Successfully created ServiceAccountKey and captured the Datum credentials payload!"
 
@@ -96,7 +96,7 @@ spec:
           # This ensures the generated key config JSON from Zitadel is completely valid
           ../../bin/zitadel-tools key2jwt \
             --audience="https://zitadel.zitadel-system.svc.cluster.local" \
-            --key="/tmp/zitadel-key-gen.json" > /tmp/jwt-gen.token
+            --key="/tmp/sa-generation-zitadel-key.json" > /tmp/sa-generation-jwt.token
 
           # Get access token from ZITADEL
           RESPONSE=$(curl -k -s -X POST "$ZITADEL_DOMAIN/oauth/v2/token" \
@@ -104,10 +104,10 @@ spec:
             -H "Host: zitadel.zitadel-system.svc.cluster.local" \
             --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
             --data-urlencode "scope=urn:zitadel:iam:org:project:id:zitadel:aud" \
-            --data-urlencode "assertion=$(cat /tmp/jwt-gen.token)")
+            --data-urlencode "assertion=$(cat /tmp/sa-generation-jwt.token)")
 
           ACCESS_TOKEN=$(printf '%s\n' "$RESPONSE" | jq -r '.access_token')
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
             echo "ERROR: Failed to obtain access token with the generated key. Response: $RESPONSE"
             exit 1
           fi
