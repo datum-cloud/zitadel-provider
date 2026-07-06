@@ -43,7 +43,10 @@ spec:
             echo "Waiting for usersweep-human-user to be visible in Zitadel..."
             for i in 1 2 3 4 5 6 7 8 9 10; do
               RESPONSE=$(curl -s -L --show-error --insecure -H 'Host: zitadel.zitadel-system.svc.cluster.local' "${ZITADEL_DOMAIN}/v2/users/usersweep-human-user" -H 'Accept: application/json' -H "Authorization: Bearer ${ZITADEL_TOKEN}")
-              USER_TYPE=$(echo "$RESPONSE" | jq -r '.user.type // empty')
+              # GetUserByID has no "type" field; the user kind is the presence
+              # of the human/machine oneof key (TYPE_* enums exist only in the
+              # search API's typeQuery).
+              USER_TYPE=$(echo "$RESPONSE" | jq -r 'if .user.human then "TYPE_HUMAN" elif .user.machine then "TYPE_MACHINE" else empty end')
               if [ "$USER_TYPE" = "TYPE_HUMAN" ]; then
                 echo "Human user visible in Zitadel!"
                 break
