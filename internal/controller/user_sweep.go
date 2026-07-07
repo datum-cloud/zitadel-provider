@@ -48,7 +48,7 @@ func init() {
 // needs. Eligibility is decided server-side: every human user, regardless of
 // state, must have a Milo counterpart; machine users are excluded.
 type ZitadelUserLister interface {
-	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]zitadel.User, error)
+	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]zitadel.User, int, error)
 }
 
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get;list;watch;create
@@ -109,7 +109,7 @@ func (s *UserSweeper) sweepOnce(ctx context.Context) error {
 
 	var offset uint64
 	for {
-		users, err := s.Zitadel.ListHumanUsers(ctx, offset, sweepPageSize)
+		users, raw, err := s.Zitadel.ListHumanUsers(ctx, offset, sweepPageSize)
 		if err != nil {
 			sweepErrors.Inc()
 			return fmt.Errorf("list zitadel users (offset %d): %w", offset, err)
@@ -132,10 +132,10 @@ func (s *UserSweeper) sweepOnce(ctx context.Context) error {
 				log.Info("Provisioned missing User resource", "zitadelUserId", u.ID, "email", u.Email)
 			}
 		}
-		if len(users) < sweepPageSize {
+		if raw < sweepPageSize {
 			break
 		}
-		offset += uint64(len(users))
+		offset += uint64(raw)
 	}
 	sweepLastSuccess.SetToCurrentTime()
 	return nil

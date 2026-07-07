@@ -85,7 +85,7 @@ type API interface {
 
 	// user management
 	GetUserByID(ctx context.Context, userID string) (*User, error)
-	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]User, error)
+	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]User, int, error)
 	GetMachineUserByUsername(ctx context.Context, orgID, username string) (*User, error)
 	AddMachineUserInOrganization(ctx context.Context, orgID, userID, username, displayName string) (createdUserID string, err error)
 	DeleteUser(ctx context.Context, userID string) error

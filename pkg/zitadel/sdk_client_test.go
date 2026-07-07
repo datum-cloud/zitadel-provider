@@ -48,7 +48,7 @@ func TestListHumanUsers(t *testing.T) {
 		}}
 
 		// Act
-		users, err := c.ListHumanUsers(context.Background(), 40, 20)
+		users, raw, err := c.ListHumanUsers(context.Background(), 40, 20)
 
 		// Assert
 		if err != nil {
@@ -56,6 +56,9 @@ func TestListHumanUsers(t *testing.T) {
 		}
 		if len(users) != 2 {
 			t.Fatalf("expected 2 users, got %d", len(users))
+		}
+		if raw != 2 {
+			t.Fatalf("expected raw page count 2, got %d", raw)
 		}
 		want := User{ID: "u1", Username: "alice", Email: "alice@example.com", State: "USER_STATE_ACTIVE", GivenName: "Alice", FamilyName: "Doe"}
 		if users[0] != want {
@@ -90,7 +93,7 @@ func TestListHumanUsers(t *testing.T) {
 		}}
 
 		// Act
-		users, err := c.ListHumanUsers(context.Background(), 0, 10)
+		users, raw, err := c.ListHumanUsers(context.Background(), 0, 10)
 
 		// Assert
 		if err != nil {
@@ -98,6 +101,9 @@ func TestListHumanUsers(t *testing.T) {
 		}
 		if len(users) != 1 || users[0].ID != "u1" {
 			t.Fatalf("expected only the human user u1, got %+v", users)
+		}
+		if raw != 2 {
+			t.Fatalf("raw must count the full server page including skipped rows: want 2, got %d", raw)
 		}
 	})
 
@@ -111,7 +117,7 @@ func TestListHumanUsers(t *testing.T) {
 		}}
 
 		// Act
-		_, err := c.ListHumanUsers(context.Background(), 0, 10)
+		_, _, err := c.ListHumanUsers(context.Background(), 0, 10)
 
 		// Assert
 		if !errors.Is(err, boom) {

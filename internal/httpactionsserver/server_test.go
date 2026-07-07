@@ -56,8 +56,8 @@ func (m *mockZitadelAPI) GetOrganization(ctx context.Context, orgID string) (*zi
 func (m *mockZitadelAPI) GetUserByID(ctx context.Context, userID string) (*zitadel.User, error) {
 	return nil, nil
 }
-func (m *mockZitadelAPI) ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]zitadel.User, error) {
-	return nil, nil
+func (m *mockZitadelAPI) ListHumanUsers(context.Context, uint64, uint32) ([]zitadel.User, int, error) {
+	return nil, 0, nil
 }
 func (m *mockZitadelAPI) GetMachineUserByUsername(ctx context.Context, orgID, username string) (*zitadel.User, error) {
 	return nil, nil

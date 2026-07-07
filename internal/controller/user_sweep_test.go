@@ -22,20 +22,27 @@ import (
 // (repo pattern: mockZitadelAPI in httpactionsserver/server_test.go).
 type mockUserLister struct {
 	pages [][]zitadel.User
+	// raws overrides the raw server-page count per page; 0 means
+	// len(pages[i]) (no rows were skipped by the human filter).
+	raws  []int
 	err   error
 	calls int
 }
 
-func (m *mockUserLister) ListHumanUsers(_ context.Context, _ uint64, _ uint32) ([]zitadel.User, error) {
+func (m *mockUserLister) ListHumanUsers(_ context.Context, _ uint64, _ uint32) ([]zitadel.User, int, error) {
 	if m.err != nil {
-		return nil, m.err
+		return nil, 0, m.err
 	}
 	idx := m.calls
 	m.calls++
 	if idx >= len(m.pages) {
-		return nil, nil
+		return nil, 0, nil
 	}
-	return m.pages[idx], nil
+	raw := len(m.pages[idx])
+	if idx < len(m.raws) && m.raws[idx] > 0 {
+		raw = m.raws[idx]
+	}
+	return m.pages[idx], raw, nil
 }
 
 var _ = ginkgo.Describe("UserSweeper", func() {
@@ -132,6 +139,31 @@ var _ = ginkgo.Describe("UserSweeper", func() {
 		var list iammiloapiscomv1alpha1.UserList
 		gomega.Expect(k8sFake.List(sctx, &list)).To(gomega.Succeed())
 		gomega.Expect(list.Items).To(gomega.HaveLen(sweepPageSize + 1))
+	})
+
+	ginkgo.It("keeps paginating when a full server page returns fewer filtered users", func() {
+		// A raw page of sweepPageSize rows where one was skipped by the
+		// human filter yields len(users) < sweepPageSize; pagination must
+		// advance on the raw count or later pages are never swept.
+		k8sFake := fake.NewClientBuilder().WithScheme(scheme).Build()
+		filtered := make([]zitadel.User, 0, sweepPageSize-1)
+		for i := 0; i < sweepPageSize-1; i++ {
+			filtered = append(filtered, human(fmt.Sprintf("f-%d", i),
+				fmt.Sprintf("f%d@example.com", i), "G", "F", "USER_STATE_ACTIVE"))
+		}
+		short := []zitadel.User{human("f-after-skip", "after@example.com", "A", "S", "USER_STATE_ACTIVE")}
+		lister := &mockUserLister{
+			pages: [][]zitadel.User{filtered, short},
+			raws:  []int{sweepPageSize, 0},
+		}
+		s := &UserSweeper{Client: k8sFake, Zitadel: lister}
+
+		gomega.Expect(s.sweepOnce(sctx)).To(gomega.Succeed())
+		gomega.Expect(lister.calls).To(gomega.Equal(2),
+			"sweeper must fetch the next page: raw page was full even though one row was filtered")
+
+		var after iammiloapiscomv1alpha1.User
+		gomega.Expect(k8sFake.Get(sctx, types.NamespacedName{Name: "f-after-skip"}, &after)).To(gomega.Succeed())
 	})
 
 	ginkgo.It("aborts the sweep on a Zitadel error", func() {
