@@ -1,0 +1,88 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: usersweep-backfill
+spec:
+  # This test exercises the UserSweeper end-to-end.
+  # 1. Create a human user directly in Zitadel (no corresponding cluster User).
+  # 2. Expect the sweeper to provision the missing iam.miloapis.com User
+  #    resource, named after the Zitadel user ID, within one sweep interval
+  #    (the CI overlay sets --user-sweep-interval=30s).
+  # 3. Clean up the Zitadel user and the provisioned User resource.
+
+  steps:
+  - name: create-zitadel-human-user-and-expect-swept-user-resource
+    try:
+      # --- Create a human user in Zitadel only (no cluster User) --------------
+      - script:
+          # The default chainsaw exec timeout (5s) is too tight for the
+          # create + poll loop below.
+          timeout: 60s
+          content: |
+            set -e
+            echo "Creating (or ensuring) usersweep-human-user in Zitadel..."
+            # We rely on two env variables that must be provided when running the suite:
+            #   ZITADEL_DOMAIN – the base URL of the Zitadel instance (e.g. http://localhost:8080)
+            #   ZITADEL_TOKEN  – a Management API token with user write permissions
+            # The sweeper only provisions HUMAN users, so we use the v2 human
+            # endpoint (unlike the userdeactivation test, which uses a machine
+            # user). We pass a fixed userId so the swept User resource name is
+            # deterministic. The password is a throwaway test-only credential
+            # required by the create endpoint.
+            CURL_DATA='{"userId":"usersweep-human-user","username":"usersweep-human-user@single.identity.miloapis.com","profile":{"givenName":"Sweep","familyName":"Target"},"email":{"email":"usersweep-human-user@single.identity.miloapis.com","isVerified":true},"password":{"password":"UsersweepE2e-Passw0rd!","changeRequired":false}}'
+
+            # Try to create the user. Ignore errors if it already exists.
+            RESPONSE=$(curl --silent --show-error --location --insecure \
+              -H 'Host: zitadel.zitadel-system.svc.cluster.local' \
+              "${ZITADEL_DOMAIN}/v2/users/human" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${ZITADEL_TOKEN}" \
+              --data-raw "$CURL_DATA" || echo "User already exists")
+            echo "Create response: $RESPONSE"
+
+            echo "Waiting for usersweep-human-user to be visible in Zitadel..."
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              RESPONSE=$(curl -s -L --show-error --insecure -H 'Host: zitadel.zitadel-system.svc.cluster.local' "${ZITADEL_DOMAIN}/v2/users/usersweep-human-user" -H 'Accept: application/json' -H "Authorization: Bearer ${ZITADEL_TOKEN}")
+              # GetUserByID has no "type" field; the user kind is the presence
+              # of the human/machine oneof key (TYPE_* enums exist only in the
+              # search API's typeQuery).
+              USER_TYPE=$(echo "$RESPONSE" | jq -r 'if .user.human then "TYPE_HUMAN" elif .user.machine then "TYPE_MACHINE" else empty end')
+              if [ "$USER_TYPE" = "TYPE_HUMAN" ]; then
+                echo "Human user visible in Zitadel!"
+                break
+              fi
+              echo "Waiting for user... (currently type=$USER_TYPE, attempt $i/10)"
+              sleep 2
+            done
+            if [ "$USER_TYPE" != "TYPE_HUMAN" ]; then
+              echo "ERROR: expected TYPE_HUMAN but got '$USER_TYPE'. Response: $RESPONSE" >&2
+              exit 1
+            fi
+
+      # --- Expect the sweeper to create the missing User resource -------------
+      # The sweeper is interval-driven (30s in CI); chainsaw retries this
+      # assert until it passes or the timeout elapses, so the timeout must
+      # comfortably exceed one sweep interval.
+      - assert:
+          timeout: 180s
+          resource:
+            apiVersion: iam.miloapis.com/v1alpha1
+            kind: User
+            metadata:
+              name: usersweep-human-user
+            spec:
+              email: usersweep-human-user@single.identity.miloapis.com
+              givenName: Sweep
+              familyName: Target
+    finally:
+      # --- Clean up: Zitadel user first so the sweeper cannot re-provision ----
+      # the resource, then the swept User resource (its finalizer treats a
+      # missing Zitadel user as already deleted).
+      - script:
+          timeout: 120s
+          content: |
+            curl --silent --show-error --location --insecure -X DELETE \
+              -H 'Host: zitadel.zitadel-system.svc.cluster.local' \
+              "${ZITADEL_DOMAIN}/v2/users/usersweep-human-user" \
+              -H "Authorization: Bearer ${ZITADEL_TOKEN}" || true
+            kubectl delete users.iam.miloapis.com usersweep-human-user --ignore-not-found --wait --timeout=60s || true

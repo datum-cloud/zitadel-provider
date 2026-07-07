@@ -115,6 +115,6 @@ Follow these steps to run the end-to-end (e2e) tests locally:
 
 `https://localhost:8888/v1/actions/create-user-account`
 
-1. Create an Actions V2 action based on your UI type:
-   - **Zitadel UI**: Configure the event `user.human.selfregistered` with the previously created target
-   - **Zitadel Custom UI**: Configure the event `user.human.added` with the previously created target
+1. Create Actions V2 executions for the user creation events:
+   - Bind **both** `user.human.selfregistered` and `user.human.added` to the same target whenever both login generations may serve signups. The Zitadel UI emits `user.human.selfregistered` while a custom UI emits `user.human.added`, and binding both guarantees provisioning regardless of which flow created the user. User provisioning is create-only and idempotent, so duplicate events are harmless.
+   - The controller's user invariant sweeper acts as a safety net: it periodically lists Zitadel users and backfills any `User` resources missed by the webhook path.

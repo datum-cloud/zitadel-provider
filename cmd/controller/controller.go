@@ -120,6 +120,8 @@ and manages the auth provider lifecycle.`,
 	cmd.Flags().StringVar(&cfg.ServerConfigFile, "server-config", "", "path to the server config file")
 	cmd.Flags().StringVar(&cfg.EmailAddressSuffix, "email-address-suffix", "identity.miloapis.com", "The suffix of the email address for the machine account.")
 	cmd.Flags().StringVar(&cfg.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	cmd.Flags().DurationVar(&cfg.UserSweepInterval, "user-sweep-interval", cfg.UserSweepInterval,
+		"Interval between Zitadel user sweeps that provision missing User resources on the core control plane. Set to 0 to disable.")
 
 	// Leader election flags
 	cmd.Flags().BoolVar(&cfg.LeaderElection.Enabled, "leader-elect", cfg.LeaderElection.Enabled, "Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -458,6 +460,17 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		Zitadel: zitadelHtppClient,
 	}).SetupWithManager(coreControlPlaneMgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "User")
+		os.Exit(1)
+	}
+
+	// Ensure every Zitadel human user has a User resource; runs
+	// only after leader election via the core control plane manager.
+	if err := coreControlPlaneMgr.Add(&controller.UserSweeper{
+		Client:   coreControlPlaneMgr.GetClient(),
+		Zitadel:  zitadelSDKClient,
+		Interval: cfg.UserSweepInterval,
+	}); err != nil {
+		setupLog.Error(err, "unable to add user sweeper")
 		os.Exit(1)
 	}
 

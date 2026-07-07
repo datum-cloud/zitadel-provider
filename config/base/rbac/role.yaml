@@ -47,6 +47,7 @@ rules:
   resources:
   - users
   verbs:
+  - create
   - get
   - list
   - patch

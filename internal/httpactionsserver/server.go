@@ -17,10 +17,10 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"go.miloapis.com/auth-provider-zitadel/internal/userprovision"
 	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
 	iammiloapiscomv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 )
@@ -261,27 +261,20 @@ func (s *Server) createUserAccountHandler(w http.ResponseWriter, r *http.Request
 		"zitadelUserId", req.UserID,
 	)
 
-	user := &iammiloapiscomv1alpha1.User{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "User",
-			APIVersion: "iam.miloapis.com/v1alpha1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: req.AggregateID,
-		},
-		Spec: iammiloapiscomv1alpha1.UserSpec{
-			Email:      req.EventPayload.Email,
-			GivenName:  req.EventPayload.FirstName,
-			FamilyName: req.EventPayload.LastName,
-		},
-	}
-
-	if err := s.k8sClient.Create(r.Context(), user); err != nil {
+	user := userprovision.NewUser(req.AggregateID, req.EventPayload.Email, req.EventPayload.FirstName, req.EventPayload.LastName)
+	created, err := userprovision.EnsureUser(r.Context(), s.k8sClient, user)
+	if err != nil {
 		log.Error(err, "Failed to create user resource",
 			"zitadelUserId", req.UserID,
 			"email", req.EventPayload.Email,
 		)
 		http.Error(w, fmt.Sprintf("failed to create user resource: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !created {
+		log.Info("User resource already exists", "zitadelUserId", req.UserID)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("already exists"))
 		return
 	}
 
