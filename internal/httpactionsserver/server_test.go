@@ -43,6 +43,9 @@ func (m *mockZitadelAPI) DeleteSession(ctx context.Context, userID, sessionID st
 func (m *mockZitadelAPI) ListIDPLinks(ctx context.Context, userID string) ([]zitadel.IDPLink, error) {
 	return nil, nil
 }
+func (m *mockZitadelAPI) ListPasskeys(ctx context.Context, userID string) ([]zitadel.Passkey, error) {
+	return nil, nil
+}
 func (m *mockZitadelAPI) CreateOrganization(ctx context.Context, name string) (string, error) {
 	return "", nil
 }

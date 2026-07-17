@@ -45,6 +45,17 @@ type IDPLink struct {
 	IDPUserName string
 }
 
+// Passkey represents a Zitadel WebAuthn passkey credential for a user.
+type Passkey struct {
+	ID   string
+	Name string
+	// State is the raw Zitadel AuthFactorState string (e.g.
+	// "AUTH_FACTOR_STATE_READY"). Callers map it to a domain-level
+	// Active/Inactive status; this package stays a thin, faithful mirror
+	// of the Zitadel wire shape (see User.State for the same convention).
+	State string
+}
+
 // User represents a Zitadel user with minimal fields.
 type User struct {
 	ID       string
@@ -76,6 +87,9 @@ type API interface {
 	GetSession(ctx context.Context, sessionID string) (*Session, error)
 	DeleteSession(ctx context.Context, userID, sessionID string) error
 	ListIDPLinks(ctx context.Context, userID string) ([]IDPLink, error)
+
+	// passkey management
+	ListPasskeys(ctx context.Context, userID string) ([]Passkey, error)
 
 	// organization management
 	CreateOrganization(ctx context.Context, name string) (orgID string, err error)
