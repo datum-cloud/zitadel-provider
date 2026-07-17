@@ -35,6 +35,12 @@ type Session struct {
 	// the milo Session as annotations so they can be read by downstream
 	// consumers like the fraud service.
 	Metadata map[string]string
+	// PasskeyVerified is true when this session's most recent authentication
+	// included a user-verified WebAuthN factor (Factors.WebAuthN.UserVerified) —
+	// the closest available signal that the login was a passkey/passwordless
+	// ceremony rather than password+OTP. Used to exempt passkey logins from
+	// the suspicious-login notification (see internal/httpactionsserver).
+	PasskeyVerified bool
 }
 
 // IDPLink represents an identity provider link for a user.

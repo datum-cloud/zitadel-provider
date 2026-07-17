@@ -154,14 +154,15 @@ func (c *SDKClient) mapZitadelSession(s *sessionv2.Session) Session {
 		}
 	}
 	return Session{
-		ID:            s.GetId(),
-		UserID:        s.GetFactors().GetUser().GetId(),
-		IP:            ip,
-		FingerprintID: fingerprint,
-		CreatedAt:     toTime(s.GetCreationDate()),
-		LastUpdated:   lastUpdated,
-		UserAgent:     extractUserAgentString(zeUA),
-		Metadata:      metadata,
+		ID:              s.GetId(),
+		UserID:          s.GetFactors().GetUser().GetId(),
+		IP:              ip,
+		FingerprintID:   fingerprint,
+		CreatedAt:       toTime(s.GetCreationDate()),
+		LastUpdated:     lastUpdated,
+		UserAgent:       extractUserAgentString(zeUA),
+		Metadata:        metadata,
+		PasskeyVerified: s.GetFactors().GetWebAuthN().GetUserVerified(),
 	}
 }
 

@@ -121,6 +121,13 @@ func (s *Server) sessionAddedHandler(w http.ResponseWriter, r *http.Request) {
 		sessionID = req.AggregateID
 	}
 
+	if current := findSessionByID(sessions, sessionID); current != nil && current.PasskeyVerified {
+		log.Info("Session authenticated via passkey; exempting from suspicious-login check", "userId", userID, "sessionId", sessionID)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("success"))
+		return
+	}
+
 	previousSessions := getPreviousSessions(sessions, sessionID)
 	if len(previousSessions) > 0 {
 		if isSuspiciousLogin(log, previousSessions, currentIP, currentUserAgent, currentFingerprint) {
@@ -132,6 +139,20 @@ func (s *Server) sessionAddedHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("success"))
+}
+
+// findSessionByID returns a pointer to the session with the given ID within
+// sessions, or nil if absent. Used to recover the current session's factor
+// detail (e.g. PasskeyVerified) from the full list already fetched via
+// ListSessions — the session.added webhook payload itself carries no
+// factor information.
+func findSessionByID(sessions []zitadel.Session, id string) *zitadel.Session {
+	for i := range sessions {
+		if sessions[i].ID == id {
+			return &sessions[i]
+		}
+	}
+	return nil
 }
 
 // getPreviousSessions filters the list of sessions to return all sessions other than the current one.

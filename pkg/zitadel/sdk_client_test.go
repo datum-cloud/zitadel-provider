@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	sessionv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/session/v2"
 	userv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/user/v2"
 	"google.golang.org/grpc"
 )
@@ -191,4 +192,26 @@ func TestListPasskeys(t *testing.T) {
 			t.Fatalf("expected wrapped boom error, got %v", err)
 		}
 	})
+}
+
+func TestMapZitadelSessionPasskeyVerified(t *testing.T) {
+	c := &SDKClient{}
+	tests := []struct {
+		name    string
+		factors *sessionv2.Factors
+		want    bool
+	}{
+		{"nil factors", nil, false},
+		{"no webAuthN factor", &sessionv2.Factors{}, false},
+		{"webAuthN present but not user-verified", &sessionv2.Factors{WebAuthN: &sessionv2.WebAuthNFactor{UserVerified: false}}, false},
+		{"webAuthN user-verified (passkey)", &sessionv2.Factors{WebAuthN: &sessionv2.WebAuthNFactor{UserVerified: true}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := c.mapZitadelSession(&sessionv2.Session{Factors: tt.factors})
+			if s.PasskeyVerified != tt.want {
+				t.Errorf("PasskeyVerified = %v, want %v", s.PasskeyVerified, tt.want)
+			}
+		})
+	}
 }
