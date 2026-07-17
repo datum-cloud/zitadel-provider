@@ -154,14 +154,15 @@ func (c *SDKClient) mapZitadelSession(s *sessionv2.Session) Session {
 		}
 	}
 	return Session{
-		ID:            s.GetId(),
-		UserID:        s.GetFactors().GetUser().GetId(),
-		IP:            ip,
-		FingerprintID: fingerprint,
-		CreatedAt:     toTime(s.GetCreationDate()),
-		LastUpdated:   lastUpdated,
-		UserAgent:     extractUserAgentString(zeUA),
-		Metadata:      metadata,
+		ID:              s.GetId(),
+		UserID:          s.GetFactors().GetUser().GetId(),
+		IP:              ip,
+		FingerprintID:   fingerprint,
+		CreatedAt:       toTime(s.GetCreationDate()),
+		LastUpdated:     lastUpdated,
+		UserAgent:       extractUserAgentString(zeUA),
+		Metadata:        metadata,
+		PasskeyVerified: s.GetFactors().GetWebAuthN().GetUserVerified(),
 	}
 }
 
@@ -313,6 +314,30 @@ func localIdentityUsername(user *userv2.User) string {
 		}
 	}
 	return strings.TrimSpace(user.GetUsername())
+}
+
+// ListPasskeys retrieves all WebAuthn passkey credentials for a user using
+// the v2 UserService. Unlike ListHumanUsers this RPC takes no pagination
+// query — Zitadel returns the user's full passkey set in one call.
+func (c *SDKClient) ListPasskeys(ctx context.Context, userID string) ([]Passkey, error) {
+	klog.V(2).Infof("ListPasskeys: listing passkeys for userID=%q", userID)
+
+	resp, err := c.user.ListPasskeys(ctx, &userv2.ListPasskeysRequest{UserId: userID})
+	if err != nil {
+		klog.Errorf("ListPasskeys: API call failed for userID=%q: %v", userID, err)
+		return nil, fmt.Errorf("list passkeys: %w", err)
+	}
+
+	out := make([]Passkey, 0, len(resp.GetResult()))
+	for _, p := range resp.GetResult() {
+		out = append(out, Passkey{
+			ID:    p.GetId(),
+			Name:  p.GetName(),
+			State: p.GetState().String(),
+		})
+	}
+	klog.V(2).Infof("ListPasskeys: found %d passkey(s) for userID=%q", len(out), userID)
+	return out, nil
 }
 
 // CreateOrganization creates a new organization in Zitadel with a custom name.

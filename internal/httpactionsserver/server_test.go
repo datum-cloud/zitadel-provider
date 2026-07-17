@@ -43,6 +43,9 @@ func (m *mockZitadelAPI) DeleteSession(ctx context.Context, userID, sessionID st
 func (m *mockZitadelAPI) ListIDPLinks(ctx context.Context, userID string) ([]zitadel.IDPLink, error) {
 	return nil, nil
 }
+func (m *mockZitadelAPI) ListPasskeys(ctx context.Context, userID string) ([]zitadel.Passkey, error) {
+	return nil, nil
+}
 func (m *mockZitadelAPI) CreateOrganization(ctx context.Context, name string) (string, error) {
 	return "", nil
 }
@@ -443,6 +446,43 @@ func TestSessionAddedHandler(t *testing.T) {
 					IP:        "1.1.1.1",
 					UserAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/120.0",
 					CreatedAt: time.Now().Add(-2 * time.Hour),
+				},
+			},
+			wantSuspicious: false,
+		},
+		{
+			name: "Passkey-authenticated session is exempt even with a new IP",
+			reqPayload: sessionAddedRequest{
+				AggregateID: "sess-curr",
+				EventType:   "oidc_session.added",
+				UserID:      "user-1",
+				EventPayload: struct {
+					UserID    string     `json:"userID"`
+					SessionID string     `json:"sessionID"`
+					UserAgent *userAgent `json:"userAgent"`
+				}{
+					UserID: "user-1",
+					UserAgent: &userAgent{
+						IP:          "9.9.9.9",
+						Description: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0 Safari/537.36",
+					},
+				},
+			},
+			mockSessions: []zitadel.Session{
+				{
+					ID:              "sess-curr",
+					UserID:          "user-1",
+					IP:              "9.9.9.9",
+					UserAgent:       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0 Safari/537.36",
+					CreatedAt:       time.Now(),
+					PasskeyVerified: true,
+				},
+				{
+					ID:        "sess-prev",
+					UserID:    "user-1",
+					IP:        "1.1.1.1",
+					UserAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/120.0",
+					CreatedAt: time.Now().Add(-1 * time.Hour),
 				},
 			},
 			wantSuspicious: false,

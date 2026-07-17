@@ -35,6 +35,12 @@ type Session struct {
 	// the milo Session as annotations so they can be read by downstream
 	// consumers like the fraud service.
 	Metadata map[string]string
+	// PasskeyVerified is true when this session's most recent authentication
+	// included a user-verified WebAuthN factor (Factors.WebAuthN.UserVerified) —
+	// the closest available signal that the login was a passkey/passwordless
+	// ceremony rather than password+OTP. Used to exempt passkey logins from
+	// the suspicious-login notification (see internal/httpactionsserver).
+	PasskeyVerified bool
 }
 
 // IDPLink represents an identity provider link for a user.
@@ -43,6 +49,17 @@ type IDPLink struct {
 	IDPName     string
 	UserID      string
 	IDPUserName string
+}
+
+// Passkey represents a Zitadel WebAuthn passkey credential for a user.
+type Passkey struct {
+	ID   string
+	Name string
+	// State is the raw Zitadel AuthFactorState string (e.g.
+	// "AUTH_FACTOR_STATE_READY"). Callers map it to a domain-level
+	// Active/Inactive status; this package stays a thin, faithful mirror
+	// of the Zitadel wire shape (see User.State for the same convention).
+	State string
 }
 
 // User represents a Zitadel user with minimal fields.
@@ -76,6 +93,9 @@ type API interface {
 	GetSession(ctx context.Context, sessionID string) (*Session, error)
 	DeleteSession(ctx context.Context, userID, sessionID string) error
 	ListIDPLinks(ctx context.Context, userID string) ([]IDPLink, error)
+
+	// passkey management
+	ListPasskeys(ctx context.Context, userID string) ([]Passkey, error)
 
 	// organization management
 	CreateOrganization(ctx context.Context, name string) (orgID string, err error)
