@@ -31,7 +31,7 @@ func Install(s *runtime.Scheme) {
 		},
 	)
 
-	// Sessions and UserIdentities are listed by callers using
+	// Sessions, UserIdentities, and Passkeys are listed by callers using
 	// status.userUID=<uid> for cross-user lookups (gated by SAR in the REST
 	// handler). Without this registration the apiserver pre-rejects the
 	// selector before the handler ever sees it.

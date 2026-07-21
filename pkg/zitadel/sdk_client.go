@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,11 +74,26 @@ func NewSDK(ctx context.Context, cfg SDKConfig) (*SDKClient, error) {
 		return nil, errors.New("missing ZITADEL domain, issuer, or key path")
 	}
 
-	// Normalize/validate: Domain must be host only; Issuer must have scheme.
+	// Normalize/validate: Domain must be host[:port]; Issuer must have scheme.
 	host := strings.TrimPrefix(strings.TrimPrefix(cfg.Domain, "https://"), "http://")
 	if host == "" || strings.Contains(host, "/") {
 		klog.Errorf("NewSDK: invalid Domain %q; must be host only (e.g. auth.example.com)", cfg.Domain)
 		return nil, errors.New("domain must be host only (e.g. auth.example.com)")
+	}
+	// Split out an explicit port (e.g. the local stack's
+	// auth.localtest.me:30000): zitadel.New always appends its own port
+	// (default 443), so a port left inside the host produces an address like
+	// "auth.localtest.me:30000:443" and every gRPC dial fails with "too many
+	// colons in address". Staging/production domains carry no port and keep
+	// the 443 default.
+	var port uint16
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		parsed, perr := strconv.ParseUint(p, 10, 16)
+		if perr != nil {
+			klog.Errorf("NewSDK: invalid port %q in Domain %q", p, cfg.Domain)
+			return nil, fmt.Errorf("invalid port %q in domain %q", p, cfg.Domain)
+		}
+		host, port = h, uint16(parsed)
 	}
 	if !strings.HasPrefix(cfg.Issuer, "https://") && !strings.HasPrefix(cfg.Issuer, "http://") {
 		klog.Errorf("NewSDK: invalid Issuer %q; must include scheme", cfg.Issuer)
@@ -85,7 +102,11 @@ func NewSDK(ctx context.Context, cfg SDKConfig) (*SDKClient, error) {
 
 	klog.V(2).Infof("NewSDK: creating ZITADEL client (host=%q, issuer scheme ok, key path provided)", host)
 
-	conf := zitadel.New(host)
+	var zopts []zitadel.Option
+	if port != 0 {
+		zopts = append(zopts, zitadel.WithPort(port))
+	}
+	conf := zitadel.New(host, zopts...)
 
 	// Use a JWT profile token source with the ZITADEL API audience scope (no "openid" needed for pure API access).
 	cl, err := client.New(ctx, conf,

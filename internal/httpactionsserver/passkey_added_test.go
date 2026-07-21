@@ -250,6 +250,64 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 		}
 	})
 
+	t.Run("resolves the target user from AggregateID, not the event creator's UserID (regression)", func(t *testing.T) {
+		const (
+			creatorID = "377553834484760638" // login-client service account that calls VerifyPasskeyRegistration
+			subjectID = "378672530606522402" // the human who actually enrolled the passkey
+		)
+		subject := &iamv1alpha1.User{
+			ObjectMeta: metav1.ObjectMeta{Name: subjectID},
+			Spec: iamv1alpha1.UserSpec{
+				GivenName:  "Priya",
+				FamilyName: "Nair",
+				Email:      "priya.nair@example.com",
+			},
+		}
+		// Deliberately no User CR for creatorID: service accounts don't
+		// have one. If the handler ever regresses to resolving the target
+		// user from UserID (the creator) instead of AggregateID (the
+		// subject), this Get 404s and the notification silently produces
+		// zero Email resources — exactly the bug this test guards against.
+		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(subject).Build()
+		server := &Server{
+			config:            &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace},
+			validateSignature: okSig,
+			k8sClient:         k8s,
+		}
+
+		body := `{"aggregateID":"378672530606522402","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"377553834484760638","event_payload":{"webAuthNTokenId":"pk-abc123","webAuthNTokenName":"MacBook Touch ID"}}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(body)))
+		w := httptest.NewRecorder()
+		server.passkeyAddedHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		emails := &notificationv1alpha1.EmailList{}
+		if err := k8s.List(context.Background(), emails); err != nil {
+			t.Fatalf("list emails: %v", err)
+		}
+		if len(emails.Items) != 1 {
+			t.Fatalf("expected exactly 1 Email resource targeting the subject user, got %d -- if 0, the handler regressed to resolving the event creator instead of AggregateID", len(emails.Items))
+		}
+		e := emails.Items[0]
+		if e.Spec.Recipient.UserRef.Name != subjectID {
+			t.Errorf("Recipient.UserRef.Name = %q, want the enrolled subject %q, not the event creator %q", e.Spec.Recipient.UserRef.Name, subjectID, creatorID)
+		}
+
+		if len(e.Spec.Variables) != 5 {
+			t.Fatalf("expected exactly 5 variables, got %d: %+v", len(e.Spec.Variables), e.Spec.Variables)
+		}
+		vars := make(map[string]string, len(e.Spec.Variables))
+		for _, v := range e.Spec.Variables {
+			vars[v.Name] = v.Value
+		}
+		if vars["UserName"] != "Priya Nair" {
+			t.Errorf("UserName = %q, want %q (the subject's name, not the creator's)", vars["UserName"], "Priya Nair")
+		}
+	})
+
 	t.Run("webAuthNTokenName takes priority over the fallback name field", func(t *testing.T) {
 		const bodyWithBoth = `{"aggregateID":"362926680773230861","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"362926680773230861","event_payload":{"webAuthNTokenId":"pk-abc123","webAuthNTokenName":"Primary Name","name":"Fallback Name"}}`
 		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(user).Build()

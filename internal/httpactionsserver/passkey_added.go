@@ -54,20 +54,37 @@ const EventTypePasskeyRemoved = "user.human.passwordless.token.removed"
 // EventTypePasskeyVerified — kept as "passkeyAdded*" because "passkey
 // added" is the user-facing notification concept (and the A6 template
 // name); only the bound event and its payload parsing are token.verified's.
-// The envelope's top-level userID mirrors createUserAccountRequest's
-// convention (both event families are on the `user` eventstore aggregate,
-// so aggregateID == userID); AggregateID is kept as a fallback for the same
-// reason.
 //
-// EventPayload.WebAuthNTokenName is the confirmed field (see
-// EventTypePasskeyVerified's doc comment for the source). EventPayload.Name
-// is kept as a secondary, best-effort fallback in case the live Actions v2
-// webhook envelope ever differs from the raw eventstore payload shape;
-// WebAuthNTokenName is checked first since it matches the confirmed struct.
+// IMPORTANT — creator vs subject: UserID is the event CREATOR, not the
+// enrolled user. AggregateID is the subject: the `user` eventstore
+// aggregate this event is about, i.e. the human who actually enrolled the
+// passkey. This is NOT the same field for every user-aggregate event —
+// createUserAccountRequest's top-level UserID works fine because
+// self-registration has no proxying actor — but VerifyPasskeyRegistration
+// is called server-side by auth-ui's login-client service account on the
+// user's behalf, making token.verified a proxied write. Confirmed against
+// a real enrollment on a local Zitadel v4.12.2 instance, 2026-07-21:
+// UserID resolved to the login-client service user (id
+// 377553834484760638, no User CR exists for a service account) while
+// AggregateID resolved to the actual enrolled human (id
+// 378672530606522402). The original version of this handler preferred
+// UserID here, so the User CR lookup 404'd and every real enrollment
+// silently produced zero Email resources.
+//
+// Compare internal/httpactionsserver/session_added.go's oidc_session.added
+// handling: it resolves the target user from EventPayload.UserID (nested
+// in the raw eventstore session-added payload, a different field from this
+// envelope's top-level UserID) and is unaffected by this asymmetry — a
+// session is always created by the human who owns it, so creator and
+// subject coincide there. Do not assume envelope UserID means "subject"
+// for any future Actions v2 handler without checking which shape applies.
 type passkeyAddedRequest struct {
-	AggregateID  string `json:"aggregateID"`
-	EventType    string `json:"event_type"`
-	CreatedAt    string `json:"created_at"`
+	AggregateID string `json:"aggregateID"`
+	EventType   string `json:"event_type"`
+	CreatedAt   string `json:"created_at"`
+	// UserID is the event creator/actor (see the doc comment above) — kept
+	// only for logging/audit visibility. Never use it to resolve the
+	// notification's target user; use AggregateID.
 	UserID       string `json:"userID"`
 	EventPayload struct {
 		WebAuthNTokenID   string `json:"webAuthNTokenId"`
@@ -133,12 +150,14 @@ func (s *Server) passkeyAddedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := req.UserID
+	// AggregateID is the subject (the enrolled human), not req.UserID (the
+	// event creator — auth-ui's login-client service account for this
+	// proxied write). See passkeyAddedRequest's doc comment for the
+	// live-fire evidence; do not fall back to UserID here, or a momentarily
+	// empty AggregateID would silently resolve to the wrong user again.
+	userID := req.AggregateID
 	if userID == "" {
-		userID = req.AggregateID
-	}
-	if userID == "" {
-		log.Error(nil, "User ID not found in payload")
+		log.Error(nil, "User ID not found in payload", "eventCreatorUserId", req.UserID)
 		http.Error(w, "userID not found in payload", http.StatusBadRequest)
 		return
 	}
