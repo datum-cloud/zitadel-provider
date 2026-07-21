@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
@@ -96,6 +97,59 @@ func TestPasskeyAddedHandlerErrorPaths(t *testing.T) {
 	}
 }
 
+// newPasskeyAddedServer builds a Server wired to a fake k8s client seeded
+// with objs, using an always-succeeding signature validator. This is the
+// plumbing every TestPasskeyAddedHandlerSuccess subtest needs and nothing
+// else, so callers get back both the Server and the client for later
+// assertions (e.g. listing created Email resources).
+func newPasskeyAddedServer(t *testing.T, cfg *ServerConfig, objs ...client.Object) (*Server, client.Client) {
+	t.Helper()
+	okSig := func(payload []byte, header, signingKey string) error { return nil }
+	k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(objs...).Build()
+	server := &Server{
+		config:            cfg,
+		validateSignature: okSig,
+		k8sClient:         k8s,
+	}
+	return server, k8s
+}
+
+// postPasskeyAdded POSTs body to passkeyAddedHandler and fails the test
+// fatally if the response status doesn't match wantStatus.
+func postPasskeyAdded(t *testing.T, server *Server, body string, wantStatus int) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(body)))
+	w := httptest.NewRecorder()
+	server.passkeyAddedHandler(w, req)
+	if w.Code != wantStatus {
+		t.Fatalf("expected status %d, got %d. Body: %s", wantStatus, w.Code, w.Body.String())
+	}
+	return w
+}
+
+// listEmails lists every Email resource in k8s, failing the test fatally on
+// a list error. Callers assert the resulting count themselves, since the
+// expected count (and the message explaining what a mismatch means) varies
+// per subtest.
+func listEmails(t *testing.T, k8s client.Client) []notificationv1alpha1.Email {
+	t.Helper()
+	emails := &notificationv1alpha1.EmailList{}
+	if err := k8s.List(context.Background(), emails); err != nil {
+		t.Fatalf("list emails: %v", err)
+	}
+	return emails.Items
+}
+
+// emailVarsMap converts an Email's Spec.Variables slice into a name->value
+// map for convenient lookups in assertions.
+func emailVarsMap(e notificationv1alpha1.Email) map[string]string {
+	vars := make(map[string]string, len(e.Spec.Variables))
+	for _, v := range e.Spec.Variables {
+		vars[v.Name] = v.Value
+	}
+	return vars
+}
+
 func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 	const (
 		userID    = "362926680773230861"
@@ -104,7 +158,6 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 	)
 	const validBody = `{"aggregateID":"362926680773230861","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"362926680773230861","event_payload":{"webAuthNTokenId":"pk-abc123","webAuthNTokenName":"MacBook Touch ID"}}`
 
-	okSig := func(payload []byte, header, signingKey string) error { return nil }
 	user := &iamv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{Name: userID},
 		Spec: iamv1alpha1.UserSpec{
@@ -115,53 +168,24 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 	}
 
 	t.Run("template unconfigured returns 200 with no Email created", func(t *testing.T) {
-		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(user).Build()
-		server := &Server{
-			config:            &ServerConfig{NotificationNamespace: namespace},
-			validateSignature: okSig,
-			k8sClient:         k8s,
-		}
+		server, k8s := newPasskeyAddedServer(t, &ServerConfig{NotificationNamespace: namespace}, user)
+		postPasskeyAdded(t, server, validBody, http.StatusOK)
 
-		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(validBody)))
-		w := httptest.NewRecorder()
-		server.passkeyAddedHandler(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
-		}
-		emails := &notificationv1alpha1.EmailList{}
-		if err := k8s.List(context.Background(), emails); err != nil {
-			t.Fatalf("list emails: %v", err)
-		}
-		if len(emails.Items) != 0 {
-			t.Errorf("expected 0 emails, got %d", len(emails.Items))
+		emails := listEmails(t, k8s)
+		if len(emails) != 0 {
+			t.Errorf("expected 0 emails, got %d", len(emails))
 		}
 	})
 
 	t.Run("template configured creates exactly one Email with the pinned variable set", func(t *testing.T) {
-		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(user).Build()
-		server := &Server{
-			config:            &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace},
-			validateSignature: okSig,
-			k8sClient:         k8s,
-		}
+		server, k8s := newPasskeyAddedServer(t, &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace}, user)
+		postPasskeyAdded(t, server, validBody, http.StatusOK)
 
-		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(validBody)))
-		w := httptest.NewRecorder()
-		server.passkeyAddedHandler(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		emails := listEmails(t, k8s)
+		if len(emails) != 1 {
+			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails))
 		}
-
-		emails := &notificationv1alpha1.EmailList{}
-		if err := k8s.List(context.Background(), emails); err != nil {
-			t.Fatalf("list emails: %v", err)
-		}
-		if len(emails.Items) != 1 {
-			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails.Items))
-		}
-		e := emails.Items[0]
+		e := emails[0]
 
 		if e.Namespace != namespace {
 			t.Errorf("expected namespace %q, got %q", namespace, e.Namespace)
@@ -179,10 +203,7 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 		if len(e.Spec.Variables) != 5 {
 			t.Fatalf("expected exactly 5 variables, got %d: %+v", len(e.Spec.Variables), e.Spec.Variables)
 		}
-		vars := make(map[string]string, len(e.Spec.Variables))
-		for _, v := range e.Spec.Variables {
-			vars[v.Name] = v.Value
-		}
+		vars := emailVarsMap(e)
 		for _, name := range []string{"UserName", "PasskeyName", "AddedTime", "Browser", "Device"} {
 			if _, ok := vars[name]; !ok {
 				t.Errorf("missing required variable %q", name)
@@ -220,31 +241,14 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 		// v2 envelope ever ships a bare "name" instead, it's still picked
 		// up rather than silently dropped.
 		const bodyWithFallbackName = `{"aggregateID":"362926680773230861","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"362926680773230861","event_payload":{"webAuthNTokenId":"pk-abc123","name":"Fallback Name"}}`
-		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(user).Build()
-		server := &Server{
-			config:            &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace},
-			validateSignature: okSig,
-			k8sClient:         k8s,
-		}
+		server, k8s := newPasskeyAddedServer(t, &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace}, user)
+		postPasskeyAdded(t, server, bodyWithFallbackName, http.StatusOK)
 
-		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(bodyWithFallbackName)))
-		w := httptest.NewRecorder()
-		server.passkeyAddedHandler(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		emails := listEmails(t, k8s)
+		if len(emails) != 1 {
+			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails))
 		}
-		emails := &notificationv1alpha1.EmailList{}
-		if err := k8s.List(context.Background(), emails); err != nil {
-			t.Fatalf("list emails: %v", err)
-		}
-		if len(emails.Items) != 1 {
-			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails.Items))
-		}
-		vars := make(map[string]string, len(emails.Items[0].Spec.Variables))
-		for _, v := range emails.Items[0].Spec.Variables {
-			vars[v.Name] = v.Value
-		}
+		vars := emailVarsMap(emails[0])
 		if vars["PasskeyName"] != "Fallback Name" {
 			t.Errorf("PasskeyName = %q, want %q", vars["PasskeyName"], "Fallback Name")
 		}
@@ -268,30 +272,16 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 		// user from UserID (the creator) instead of AggregateID (the
 		// subject), this Get 404s and the notification silently produces
 		// zero Email resources — exactly the bug this test guards against.
-		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(subject).Build()
-		server := &Server{
-			config:            &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace},
-			validateSignature: okSig,
-			k8sClient:         k8s,
-		}
+		server, k8s := newPasskeyAddedServer(t, &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace}, subject)
 
 		body := `{"aggregateID":"378672530606522402","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"377553834484760638","event_payload":{"webAuthNTokenId":"pk-abc123","webAuthNTokenName":"MacBook Touch ID"}}`
-		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(body)))
-		w := httptest.NewRecorder()
-		server.passkeyAddedHandler(w, req)
+		postPasskeyAdded(t, server, body, http.StatusOK)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		emails := listEmails(t, k8s)
+		if len(emails) != 1 {
+			t.Fatalf("expected exactly 1 Email resource targeting the subject user, got %d -- if 0, the handler regressed to resolving the event creator instead of AggregateID", len(emails))
 		}
-
-		emails := &notificationv1alpha1.EmailList{}
-		if err := k8s.List(context.Background(), emails); err != nil {
-			t.Fatalf("list emails: %v", err)
-		}
-		if len(emails.Items) != 1 {
-			t.Fatalf("expected exactly 1 Email resource targeting the subject user, got %d -- if 0, the handler regressed to resolving the event creator instead of AggregateID", len(emails.Items))
-		}
-		e := emails.Items[0]
+		e := emails[0]
 		if e.Spec.Recipient.UserRef.Name != subjectID {
 			t.Errorf("Recipient.UserRef.Name = %q, want the enrolled subject %q, not the event creator %q", e.Spec.Recipient.UserRef.Name, subjectID, creatorID)
 		}
@@ -299,10 +289,7 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 		if len(e.Spec.Variables) != 5 {
 			t.Fatalf("expected exactly 5 variables, got %d: %+v", len(e.Spec.Variables), e.Spec.Variables)
 		}
-		vars := make(map[string]string, len(e.Spec.Variables))
-		for _, v := range e.Spec.Variables {
-			vars[v.Name] = v.Value
-		}
+		vars := emailVarsMap(e)
 		if vars["UserName"] != "Priya Nair" {
 			t.Errorf("UserName = %q, want %q (the subject's name, not the creator's)", vars["UserName"], "Priya Nair")
 		}
@@ -310,31 +297,14 @@ func TestPasskeyAddedHandlerSuccess(t *testing.T) {
 
 	t.Run("webAuthNTokenName takes priority over the fallback name field", func(t *testing.T) {
 		const bodyWithBoth = `{"aggregateID":"362926680773230861","event_type":"user.human.passwordless.token.verified","created_at":"2026-07-21T12:00:00Z","userID":"362926680773230861","event_payload":{"webAuthNTokenId":"pk-abc123","webAuthNTokenName":"Primary Name","name":"Fallback Name"}}`
-		k8s := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(user).Build()
-		server := &Server{
-			config:            &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace},
-			validateSignature: okSig,
-			k8sClient:         k8s,
-		}
+		server, k8s := newPasskeyAddedServer(t, &ServerConfig{PasskeyAddedEmailTemplate: template, NotificationNamespace: namespace}, user)
+		postPasskeyAdded(t, server, bodyWithBoth, http.StatusOK)
 
-		req := httptest.NewRequest(http.MethodPost, "/v1/actions/passkey-added", bytes.NewReader([]byte(bodyWithBoth)))
-		w := httptest.NewRecorder()
-		server.passkeyAddedHandler(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+		emails := listEmails(t, k8s)
+		if len(emails) != 1 {
+			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails))
 		}
-		emails := &notificationv1alpha1.EmailList{}
-		if err := k8s.List(context.Background(), emails); err != nil {
-			t.Fatalf("list emails: %v", err)
-		}
-		if len(emails.Items) != 1 {
-			t.Fatalf("expected exactly 1 Email resource, got %d", len(emails.Items))
-		}
-		vars := make(map[string]string, len(emails.Items[0].Spec.Variables))
-		for _, v := range emails.Items[0].Spec.Variables {
-			vars[v.Name] = v.Value
-		}
+		vars := emailVarsMap(emails[0])
 		if vars["PasskeyName"] != "Primary Name" {
 			t.Errorf("PasskeyName = %q, want %q", vars["PasskeyName"], "Primary Name")
 		}
