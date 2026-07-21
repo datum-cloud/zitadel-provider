@@ -52,7 +52,7 @@ const EventTypePasskeyRemoved = "user.human.passwordless.token.removed"
 
 // passkeyAddedRequest models the Actions v2 webhook envelope for
 // EventTypePasskeyVerified — kept as "passkeyAdded*" because "passkey
-// added" is the user-facing notification concept (and the A6 template
+// added" is the user-facing notification concept (and the email template's
 // name); only the bound event and its payload parsing are token.verified's.
 //
 // IMPORTANT — creator vs subject: UserID is the event CREATOR, not the
