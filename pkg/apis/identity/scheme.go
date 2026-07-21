@@ -61,4 +61,13 @@ func Install(s *runtime.Scheme) {
 		},
 		userScopedSelector,
 	)
+
+	_ = s.AddFieldLabelConversionFunc(
+		schema.GroupVersionKind{
+			Group:   milov1alpha1.SchemeGroupVersion.Group,
+			Version: milov1alpha1.SchemeGroupVersion.Version,
+			Kind:    "Passkey",
+		},
+		userScopedSelector,
+	)
 }
