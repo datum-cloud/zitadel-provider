@@ -38,6 +38,14 @@ type ServerConfig struct {
 	// SuspiciousLoginEmailTemplate is the name of the EmailTemplate cluster resource
 	// used to notify users of suspicious login activity.
 	SuspiciousLoginEmailTemplate string
+	// PasskeyAddedEmailTemplate is the name of the EmailTemplate cluster
+	// resource used to notify users when a passkey is enrolled on their
+	// account. Empty by default (unconfigured means skip, same convention
+	// as SuspiciousLoginEmailTemplate) — unlike that template, this one has
+	// no safe universal default name yet and must be supplied per
+	// environment once the user-passkey-added template resource exists
+	// there.
+	PasskeyAddedEmailTemplate string
 	// NotificationNamespace is the namespace in which Email resources are created.
 	NotificationNamespace string
 	// GraphQLGatewayURL is the endpoint of the internal GraphQL gateway used
@@ -190,6 +198,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/actions/customize-jwt", s.customizeJwtHandler)
 	mux.HandleFunc("/v1/actions/idp-intent-succeeded", s.idpIntentSucceededHandler)
 	mux.HandleFunc("/v1/actions/session-added", s.sessionAddedHandler)
+	mux.HandleFunc("/v1/actions/passkey-added", s.passkeyAddedHandler)
 
 	srv := &http.Server{
 		Addr:    s.config.Addr,
