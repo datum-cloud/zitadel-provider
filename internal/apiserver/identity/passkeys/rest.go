@@ -61,6 +61,20 @@ func passkeyState(raw string) string {
 	return "Inactive"
 }
 
+// toMiloPasskey builds the milo Passkey object shared by List and Get.
+//
+// CreationTimestamp caveat: it is stamped metav1.Now() at read time, not a
+// real value — Zitadel's ListPasskeys RPC returns no created-at for a
+// credential, so there is nothing genuine to report. This mirrors
+// sessions/rest.go and useridentities/rest.go's List() paths, which stamp
+// the same synthetic "now" for the same reason (their Get() paths happen
+// to leave ObjectMeta.CreationTimestamp zero-valued instead — an existing
+// inconsistency between those two resources' own List and Get, not
+// something introduced here). Passkeys' List and Get share this one
+// builder, so both consistently carry the synthetic timestamp rather than
+// only one of the two paths; treated as a deliberate, documented tradeoff
+// (consistency within this resource over exactly replicating the
+// siblings' internal List/Get split) rather than a bug.
 func toMiloPasskey(p zitadel.Passkey, uid string) *milov1alpha1.Passkey {
 	return &milov1alpha1.Passkey{
 		TypeMeta:   metav1.TypeMeta{Kind: "Passkey", APIVersion: milov1alpha1.SchemeGroupVersion.String()},
