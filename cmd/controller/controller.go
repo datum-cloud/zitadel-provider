@@ -504,7 +504,7 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 
 	setupLog.Info("starting cluster discovery provider")
 	g.Go(func() error {
-		return ignoreCanceled(provider.Run(ctx, mgr))
+		return ignoreCanceled(provider.Start(ctx, mgr))
 	})
 
 	setupLog.Info("starting multicluster manager")
@@ -522,7 +522,7 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 
 type runnableProvider interface {
 	multicluster.Provider
-	Run(context.Context, mcmanager.Manager) error
+	Start(context.Context, multicluster.Aware) error
 }
 
 // coreControlPlaneRunnable implements multicluster-runtime Runnable interface
@@ -538,7 +538,7 @@ func (r *coreControlPlaneRunnable) Start(ctx context.Context) error {
 	return r.coreControlPlaneMgr.Start(ctx)
 }
 
-func (r *coreControlPlaneRunnable) Engage(ctx context.Context, clusterName string, cluster cluster.Cluster) error {
+func (r *coreControlPlaneRunnable) Engage(ctx context.Context, clusterName multicluster.ClusterName, cluster cluster.Cluster) error {
 	// No-op: this runnable doesn't manage clusters
 	return nil
 }
@@ -551,11 +551,11 @@ type wrappedSingleClusterProvider struct {
 	cluster cluster.Cluster
 }
 
-func (p *wrappedSingleClusterProvider) Run(ctx context.Context, mgr mcmanager.Manager) error {
-	if err := mgr.Engage(ctx, "single", p.cluster); err != nil {
+func (p *wrappedSingleClusterProvider) Start(ctx context.Context, aware multicluster.Aware) error {
+	if err := aware.Engage(ctx, "single", p.cluster); err != nil {
 		return err
 	}
-	return p.Provider.(runnableProvider).Run(ctx, mgr)
+	return p.Provider.(runnableProvider).Start(ctx, aware)
 }
 
 func initializeClusterDiscovery(
