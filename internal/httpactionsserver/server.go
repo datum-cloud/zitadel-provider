@@ -1,6 +1,7 @@
 package httpactionsserver
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -15,12 +16,13 @@ import (
 	"sync"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"go.miloapis.com/auth-provider-zitadel/internal/userprovision"
 	"go.miloapis.com/auth-provider-zitadel/pkg/zitadel"
 	iammiloapiscomv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // ServerConfig holds configuration for the HTTP actions server
@@ -36,6 +38,12 @@ type ServerConfig struct {
 	// SuspiciousLoginEmailTemplate is the name of the EmailTemplate cluster resource
 	// used to notify users of suspicious login activity.
 	SuspiciousLoginEmailTemplate string
+	// PasskeyAddedEmailTemplate is the name of the EmailTemplate cluster
+	// resource used to notify users when a passkey is enrolled on their
+	// account. Defaults to the conventional generated name (same scheme as
+	// SuspiciousLoginEmailTemplate and milo's notification templates); an
+	// empty value disables the notification (unconfigured means skip).
+	PasskeyAddedEmailTemplate string
 	// NotificationNamespace is the namespace in which Email resources are created.
 	NotificationNamespace string
 	// GraphQLGatewayURL is the endpoint of the internal GraphQL gateway used
@@ -46,6 +54,11 @@ type ServerConfig struct {
 	// used to verify the gateway's TLS certificate. When empty the system
 	// cert pool is used (sufficient if the CA is already trusted by the OS).
 	GraphQLGatewayCACertFile string
+	// IdpIntentUserLookupAttempts is how many times to retry fetching the Milo
+	// User when idpintent.succeeded arrives before user.human.added creates it.
+	IdpIntentUserLookupAttempts int
+	// IdpIntentUserLookupBaseWait is the initial backoff between those retries.
+	IdpIntentUserLookupBaseWait time.Duration
 }
 
 type ValidateSignatureFunc func(payload []byte, header string, signingKey string) error
@@ -56,9 +69,12 @@ func NewServerConfig() *ServerConfig {
 		Addr:                         ":8082",
 		DisableSignatureValidation:   false,
 		SuspiciousLoginEmailTemplate: "emailtemplates.notification.miloapis.com-usersuspiciousemailtemplate",
+		PasskeyAddedEmailTemplate:    "emailtemplates.notification.miloapis.com-userpasskeyaddedemailtemplate",
 		NotificationNamespace:        "milo-system",
 		GraphQLGatewayURL:            "https://graphql-gateway.graphql-gateway.svc.cluster.local:4000/graphql",
 		GraphQLGatewayCACertFile:     "/etc/ssl/certs/datum-ca.crt",
+		IdpIntentUserLookupAttempts:  8,
+		IdpIntentUserLookupBaseWait:  250 * time.Millisecond,
 	}
 }
 
@@ -181,6 +197,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/actions/customize-jwt", s.customizeJwtHandler)
 	mux.HandleFunc("/v1/actions/idp-intent-succeeded", s.idpIntentSucceededHandler)
 	mux.HandleFunc("/v1/actions/session-added", s.sessionAddedHandler)
+	mux.HandleFunc("/v1/actions/passkey-added", s.passkeyAddedHandler)
 
 	srv := &http.Server{
 		Addr:    s.config.Addr,
@@ -252,27 +269,20 @@ func (s *Server) createUserAccountHandler(w http.ResponseWriter, r *http.Request
 		"zitadelUserId", req.UserID,
 	)
 
-	user := &iammiloapiscomv1alpha1.User{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "User",
-			APIVersion: "iam.miloapis.com/v1alpha1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: req.AggregateID,
-		},
-		Spec: iammiloapiscomv1alpha1.UserSpec{
-			Email:      req.EventPayload.Email,
-			GivenName:  req.EventPayload.FirstName,
-			FamilyName: req.EventPayload.LastName,
-		},
-	}
-
-	if err := s.k8sClient.Create(r.Context(), user); err != nil {
+	user := userprovision.NewUser(req.AggregateID, req.EventPayload.Email, req.EventPayload.FirstName, req.EventPayload.LastName)
+	created, err := userprovision.EnsureUser(r.Context(), s.k8sClient, user)
+	if err != nil {
 		log.Error(err, "Failed to create user resource",
 			"zitadelUserId", req.UserID,
 			"email", req.EventPayload.Email,
 		)
 		http.Error(w, fmt.Sprintf("failed to create user resource: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !created {
+		log.Info("User resource already exists", "zitadelUserId", req.UserID)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("already exists"))
 		return
 	}
 
@@ -459,12 +469,22 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update user avatar URL and last login provider
+	userID := miloUserIDFromIdpIntent(req)
+	if userID == "" {
+		log.Error(nil, "User ID not found in idpintent.succeeded payload")
+		http.Error(w, "userID not found in payload", http.StatusBadRequest)
+		return
+	}
+
 	ctx := r.Context()
-	current := &iammiloapiscomv1alpha1.User{}
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Name: req.EventPayload.UserID}, current); err != nil {
-		log.Error(err, "Failed to get User resource", "userId", req.EventPayload.UserID)
-		http.Error(w, "user not found", http.StatusNotFound)
+	current, err := s.getUserWithRetry(ctx, userID)
+	if err != nil {
+		log.Error(err, "Failed to get User resource", "userId", userID)
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get user", http.StatusInternalServerError)
 		return
 	}
 	original := current.DeepCopy()
@@ -479,9 +499,43 @@ func (s *Server) idpIntentSucceededHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	log.Info("Processed idpintent.succeeded", "idpProvider", idpProvider, "avatarURL", avatarURL, "userId", req.EventPayload.UserID)
+	log.Info("Processed idpintent.succeeded", "idpProvider", idpProvider, "avatarURL", avatarURL, "userId", userID)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("success"))
+}
+
+func miloUserIDFromIdpIntent(req IdpIntentSucceededRequest) string {
+	if id := req.EventPayload.UserID; id != "" {
+		return id
+	}
+	return req.UserID
+}
+
+func (s *Server) getUserWithRetry(ctx context.Context, userID string) (*iammiloapiscomv1alpha1.User, error) {
+	current := &iammiloapiscomv1alpha1.User{}
+	var err error
+
+	attempts := s.config.IdpIntentUserLookupAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	baseWait := s.config.IdpIntentUserLookupBaseWait
+	if baseWait < 0 {
+		baseWait = 0
+	}
+
+	for attempt := 0; attempt < attempts; attempt++ {
+		err = s.k8sClient.Get(ctx, client.ObjectKey{Name: userID}, current)
+		if err == nil {
+			return current, nil
+		}
+		if !apierrors.IsNotFound(err) || attempt == attempts-1 {
+			return nil, err
+		}
+		time.Sleep(baseWait * time.Duration(1<<attempt))
+	}
+
+	return nil, err
 }
 
 // parseIDPUserData inspects the raw json of idpUser (base64 decoded) and
@@ -496,6 +550,9 @@ func parseIDPUserData(raw []byte) (iammiloapiscomv1alpha1.AuthProvider, string, 
 	if user, ok := m["User"].(map[string]interface{}); ok {
 		if pic, ok := user["picture"].(string); ok && pic != "" {
 			return iammiloapiscomv1alpha1.AuthProviderGoogle, pic, nil
+		}
+		if avatar, ok := user["avatar_url"].(string); ok && avatar != "" {
+			return iammiloapiscomv1alpha1.AuthProviderGitHub, avatar, nil
 		}
 	}
 

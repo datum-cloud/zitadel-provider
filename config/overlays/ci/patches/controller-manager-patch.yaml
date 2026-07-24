@@ -19,6 +19,10 @@ spec:
               value: "https://zitadel.zitadel-system.svc.cluster.local"
             - name: ZITADEL_DEFAULT_MACHINE_KEY_EXPIRATION
               value: "87600h"
+            # Short sweep interval so the usersweep e2e test observes a tick
+            # without waiting the production default of 10m.
+            - name: USER_SWEEP_INTERVAL
+              value: "30s"
             - name: ZITADEL_CONTROLLER_MANAGER_CONFIG_PATH
               value: "/etc/controller-manager/controller-manager-config.yaml"
             - name: LEADER_ELECT

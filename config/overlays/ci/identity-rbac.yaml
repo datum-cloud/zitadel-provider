@@ -6,6 +6,9 @@ rules:
   - apiGroups: ["identity.miloapis.com"]
     resources: ["useridentities", "sessions"]
     verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["identity.miloapis.com"]
+    resources: ["passkeys"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

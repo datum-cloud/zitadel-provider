@@ -8,7 +8,6 @@ rules:
   - iam.miloapis.com
   resources:
   - platformaccesses
-  - users
   verbs:
   - get
   - list
@@ -49,6 +48,17 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - iam.miloapis.com
+  resources:
+  - users
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - infrastructure.miloapis.com
   resources:

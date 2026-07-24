@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/zitadel/zitadel-go/v3/pkg/client/middleware"
 	filterv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/filter/v2"
 	idpv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/idp/v2"
+	objectv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/object/v2"
 	orgv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/org/v2"
 	sessionv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/session/v2"
 	userv2 "github.com/zitadel/zitadel-go/v3/pkg/client/zitadel/user/v2"
@@ -71,11 +74,26 @@ func NewSDK(ctx context.Context, cfg SDKConfig) (*SDKClient, error) {
 		return nil, errors.New("missing ZITADEL domain, issuer, or key path")
 	}
 
-	// Normalize/validate: Domain must be host only; Issuer must have scheme.
+	// Normalize/validate: Domain must be host[:port]; Issuer must have scheme.
 	host := strings.TrimPrefix(strings.TrimPrefix(cfg.Domain, "https://"), "http://")
 	if host == "" || strings.Contains(host, "/") {
 		klog.Errorf("NewSDK: invalid Domain %q; must be host only (e.g. auth.example.com)", cfg.Domain)
 		return nil, errors.New("domain must be host only (e.g. auth.example.com)")
+	}
+	// Split out an explicit port (e.g. the local stack's
+	// auth.localtest.me:30000): zitadel.New always appends its own port
+	// (default 443), so a port left inside the host produces an address like
+	// "auth.localtest.me:30000:443" and every gRPC dial fails with "too many
+	// colons in address". Staging/production domains carry no port and keep
+	// the 443 default.
+	var port uint16
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		parsed, perr := strconv.ParseUint(p, 10, 16)
+		if perr != nil {
+			klog.Errorf("NewSDK: invalid port %q in Domain %q", p, cfg.Domain)
+			return nil, fmt.Errorf("invalid port %q in domain %q", p, cfg.Domain)
+		}
+		host, port = h, uint16(parsed)
 	}
 	if !strings.HasPrefix(cfg.Issuer, "https://") && !strings.HasPrefix(cfg.Issuer, "http://") {
 		klog.Errorf("NewSDK: invalid Issuer %q; must include scheme", cfg.Issuer)
@@ -84,7 +102,11 @@ func NewSDK(ctx context.Context, cfg SDKConfig) (*SDKClient, error) {
 
 	klog.V(2).Infof("NewSDK: creating ZITADEL client (host=%q, issuer scheme ok, key path provided)", host)
 
-	conf := zitadel.New(host)
+	var zopts []zitadel.Option
+	if port != 0 {
+		zopts = append(zopts, zitadel.WithPort(port))
+	}
+	conf := zitadel.New(host, zopts...)
 
 	// Use a JWT profile token source with the ZITADEL API audience scope (no "openid" needed for pure API access).
 	cl, err := client.New(ctx, conf,
@@ -153,14 +175,15 @@ func (c *SDKClient) mapZitadelSession(s *sessionv2.Session) Session {
 		}
 	}
 	return Session{
-		ID:            s.GetId(),
-		UserID:        s.GetFactors().GetUser().GetId(),
-		IP:            ip,
-		FingerprintID: fingerprint,
-		CreatedAt:     toTime(s.GetCreationDate()),
-		LastUpdated:   lastUpdated,
-		UserAgent:     extractUserAgentString(zeUA),
-		Metadata:      metadata,
+		ID:              s.GetId(),
+		UserID:          s.GetFactors().GetUser().GetId(),
+		IP:              ip,
+		FingerprintID:   fingerprint,
+		CreatedAt:       toTime(s.GetCreationDate()),
+		LastUpdated:     lastUpdated,
+		UserAgent:       extractUserAgentString(zeUA),
+		Metadata:        metadata,
+		PasskeyVerified: s.GetFactors().GetWebAuthN().GetUserVerified(),
 	}
 }
 
@@ -312,6 +335,30 @@ func localIdentityUsername(user *userv2.User) string {
 		}
 	}
 	return strings.TrimSpace(user.GetUsername())
+}
+
+// ListPasskeys retrieves all WebAuthn passkey credentials for a user using
+// the v2 UserService. Unlike ListHumanUsers this RPC takes no pagination
+// query — Zitadel returns the user's full passkey set in one call.
+func (c *SDKClient) ListPasskeys(ctx context.Context, userID string) ([]Passkey, error) {
+	klog.V(2).Infof("ListPasskeys: listing passkeys for userID=%q", userID)
+
+	resp, err := c.user.ListPasskeys(ctx, &userv2.ListPasskeysRequest{UserId: userID})
+	if err != nil {
+		klog.Errorf("ListPasskeys: API call failed for userID=%q: %v", userID, err)
+		return nil, fmt.Errorf("list passkeys: %w", err)
+	}
+
+	out := make([]Passkey, 0, len(resp.GetResult()))
+	for _, p := range resp.GetResult() {
+		out = append(out, Passkey{
+			ID:    p.GetId(),
+			Name:  p.GetName(),
+			State: p.GetState().String(),
+		})
+	}
+	klog.V(2).Infof("ListPasskeys: found %d passkey(s) for userID=%q", len(out), userID)
+	return out, nil
 }
 
 // CreateOrganization creates a new organization in Zitadel with a custom name.
@@ -541,6 +588,51 @@ func (c *SDKClient) GetUserByID(ctx context.Context, userID string) (*User, erro
 	}
 	klog.V(2).Infof("GetUserByID: user id=%q found (username=%q)", result.ID, result.Username)
 	return result, nil
+}
+
+// ListHumanUsers returns one page of human users across all organizations,
+// filtered server-side to TYPE_HUMAN and ordered ascending for stable
+// pagination. Machine users are excluded; user state is intentionally NOT
+// filtered — every human user in Zitadel is returned regardless of state.
+// The int return is the raw number of results in the server page (before
+// the defensive non-human skip) — callers MUST paginate on it, not on
+// len(users), or a skipped row on a full page would end pagination early.
+func (c *SDKClient) ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]User, int, error) {
+	klog.V(2).Infof("ListHumanUsers: listing human users offset=%d limit=%d", offset, limit)
+
+	resp, err := c.user.ListUsers(ctx, &userv2.ListUsersRequest{
+		Query: &objectv2.ListQuery{Offset: offset, Limit: limit, Asc: true},
+		Queries: []*userv2.SearchQuery{
+			{Query: &userv2.SearchQuery_TypeQuery{
+				TypeQuery: &userv2.TypeQuery{Type: userv2.Type_TYPE_HUMAN},
+			}},
+		},
+	})
+	if err != nil {
+		klog.Errorf("ListHumanUsers: failed to list users: %v", err)
+		return nil, 0, fmt.Errorf("list human users: %w", err)
+	}
+
+	users := make([]User, 0, len(resp.GetResult()))
+	for _, user := range resp.GetResult() {
+		// Defensive: the server-side filter should only return humans.
+		human := user.GetHuman()
+		if human == nil {
+			continue
+		}
+		users = append(users, User{
+			ID:         user.GetUserId(),
+			Username:   localIdentityUsername(user),
+			Email:      human.GetEmail().GetEmail(),
+			State:      user.GetState().String(),
+			GivenName:  human.GetProfile().GetGivenName(),
+			FamilyName: human.GetProfile().GetFamilyName(),
+		})
+	}
+
+	raw := len(resp.GetResult())
+	klog.V(2).Infof("ListHumanUsers: found %d human user(s) in %d result(s) at offset=%d", len(users), raw, offset)
+	return users, raw, nil
 }
 
 // DeleteUser removes a Zitadel user.

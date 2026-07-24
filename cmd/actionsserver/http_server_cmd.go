@@ -137,11 +137,16 @@ If a TLS certificate and key are provided, the server will start in HTTPS mode. 
 
 	// Notification flags
 	cmd.Flags().StringVar(&cfg.SuspiciousLoginEmailTemplate, "suspicious-login-email-template", cfg.SuspiciousLoginEmailTemplate, "Name of the EmailTemplate cluster resource used for suspicious login notifications")
+	cmd.Flags().StringVar(&cfg.PasskeyAddedEmailTemplate, "passkey-added-email-template", cfg.PasskeyAddedEmailTemplate, "Name of the EmailTemplate cluster resource used for passkey-added notifications")
 	cmd.Flags().StringVar(&cfg.NotificationNamespace, "notification-namespace", cfg.NotificationNamespace, "Namespace in which Email resources are created")
 
 	// GraphQL Gateway flags
 	cmd.Flags().StringVar(&cfg.GraphQLGatewayURL, "graphql-gateway-url", cfg.GraphQLGatewayURL, "GraphQL gateway endpoint used for IP geolocation (empty disables geolocation)")
 	cmd.Flags().StringVar(&cfg.GraphQLGatewayCACertFile, "graphql-gateway-ca-cert", cfg.GraphQLGatewayCACertFile, "Path to PEM CA cert used to verify the gateway TLS certificate")
+
+	// IDP intent avatar sync flags
+	cmd.Flags().IntVar(&cfg.IdpIntentUserLookupAttempts, "idp-intent-user-lookup-attempts", cfg.IdpIntentUserLookupAttempts, "Retry count when idpintent.succeeded arrives before the Milo User exists")
+	cmd.Flags().DurationVar(&cfg.IdpIntentUserLookupBaseWait, "idp-intent-user-lookup-base-wait", cfg.IdpIntentUserLookupBaseWait, "Initial backoff between idp-intent user lookup retries")
 
 	// Zitadel flags
 	cmd.Flags().StringVar(&zitadelIssuer, "zitadel-issuer", "", "Zitadel issuer URL (fallback: ZITADEL_ISSUER env)")
