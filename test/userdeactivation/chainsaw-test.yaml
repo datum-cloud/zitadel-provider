@@ -1,16 +1,18 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: userdeactivation-state
+  name: platformaccess-state
 spec:
-  # This test exercises the UserDeactivation controller end-to-end.
+  # This test exercises the PlatformAccess controller end-to-end.
   # 1. Create a human user in cluster and Zitadel.
-  # 2. Create a UserDeactivation object for the human user.
-  # 3. Verify the User status.state becomes Inactive.
-  # 4. Verify the Zitadel user is actually inactive.
-  # 5. Delete the UserDeactivation object.
-  # 6. Verify the User status.state becomes Active.
-  # 7. Verify the Zitadel user is actually active.
+  # 2. Create a PlatformAccess object with state: Suspended for the human user.
+  # 3. Verify the Zitadel user is actually inactive.
+  # 4. Patch the PlatformAccess object state to Approved.
+  # 5. Verify the Zitadel user is actually active.
+  # 6. Patch the PlatformAccess object state back to Suspended.
+  # 7. Verify the Zitadel user is inactive again.
+  # 8. Patch the PlatformAccess object state to Rejected.
+  # 9. Verify the Zitadel user is active again.
 
   steps:
   - name: create-human-user-and-verify
@@ -62,11 +64,11 @@ spec:
             # In a real environment, another service would do this.
             kubectl patch user human-user --subresource=status --type=merge -p '{"status": {"state": "Active"}}'
 
-  - name: create-userdeactivation-and-verify-inactive-user
+  - name: create-platformaccess-and-verify-inactive-user
     try:
-      # --- Apply UserDeactivation object ---------------------------------------------
+      # --- Apply PlatformAccess object ---------------------------------------------
       - apply:
-          file: resources/userdeactivation.yaml
+          file: resources/platformaccess.yaml
 
       # --- Verify the Zitadel user is inactive -----------------------------------
       - script:
@@ -90,11 +92,27 @@ spec:
             # Simulate third-party service updating the Kubernetes User status to Inactive
             kubectl patch user human-user --subresource=status --type=merge -p '{"status": {"state": "Inactive"}}'
 
-  - name: delete-userdeactivation-and-verify-active-user
+      # --- Verify PlatformAccess status is updated correctly ----------------------
+      - assert:
+          resource:
+            apiVersion: iam.miloapis.com/v1alpha1
+            kind: PlatformAccess
+            metadata:
+              name: human-user
+            status:
+              conditions:
+              - type: ZitadelReady
+                status: "True"
+                reason: Suspended
+
+  - name: approve-platformaccess-and-verify-active-user
     try:
-      # --- DeleteUserDeactivation object ---------------------------------------------
-      - delete:
-          file: resources/userdeactivation.yaml
+      # --- Patch PlatformAccess to Approved ---------------------------------------------
+      - script:
+          content: |
+            set -e
+            echo "Patching PlatformAccess to Approved..."
+            kubectl patch platformaccess human-user --type=merge -p '{"spec": {"state": "Approved"}}'
 
       # --- Verify the Zitadel user is active -----------------------------------
       - script:
@@ -102,8 +120,6 @@ spec:
             set -e
             echo "Waiting for Zitadel reconciliation for user human-user..."
             for i in 1 2 3 4 5 6 7 8 9 10; do
-              # Finalizer logic for UserDeactivation relies on User status being Inactive.
-              # Since we patched it to Inactive above, the finalizer should reactivate it in Zitadel.
               RESPONSE=$(curl -v -s -L --show-error --insecure -H 'Host: zitadel.zitadel-system.svc.cluster.local' "${ZITADEL_DOMAIN}/v2/users/human-user" -H 'Accept: application/json' -H "Authorization: Bearer ${ZITADEL_TOKEN}")
               USER_STATE=$(echo "$RESPONSE" | jq -r '.user.state // empty')
               if [ "$USER_STATE" = "USER_STATE_ACTIVE" ]; then
@@ -120,4 +136,103 @@ spec:
             # Simulate third-party service updating the Kubernetes User status back to Active
             kubectl patch user human-user --subresource=status --type=merge -p '{"status": {"state": "Active"}}'
 
-  
+      # --- Verify PlatformAccess status is updated correctly ----------------------
+      - assert:
+          resource:
+            apiVersion: iam.miloapis.com/v1alpha1
+            kind: PlatformAccess
+            metadata:
+              name: human-user
+            status:
+              conditions:
+              - type: ZitadelReady
+                status: "True"
+                reason: Approved
+
+  - name: suspend-platformaccess-again-and-verify-inactive-user
+    try:
+      # --- Patch PlatformAccess to Suspended ---------------------------------------------
+      - script:
+          content: |
+            set -e
+            echo "Patching PlatformAccess to Suspended..."
+            kubectl patch platformaccess human-user --type=merge -p '{"spec": {"state": "Suspended"}}'
+
+      # --- Verify the Zitadel user is inactive -----------------------------------
+      - script:
+          content: |
+            set -e
+            echo "Waiting for Zitadel deactivation for user human-user..."
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              RESPONSE=$(curl -v -s -L --show-error --insecure -H 'Host: zitadel.zitadel-system.svc.cluster.local' "${ZITADEL_DOMAIN}/v2/users/human-user" -H 'Accept: application/json' -H "Authorization: Bearer ${ZITADEL_TOKEN}")
+              USER_STATE=$(echo "$RESPONSE" | jq -r '.user.state // empty')
+              if [ "$USER_STATE" = "USER_STATE_INACTIVE" ]; then
+                echo "User successfully deactivated in Zitadel!"
+                break
+              fi
+              echo "Waiting for state INACTIVE... (currently $USER_STATE, attempt $i/10)"
+              sleep 2
+            done
+            if [ "$USER_STATE" != "USER_STATE_INACTIVE" ]; then
+              echo "ERROR: expected USER_STATE_INACTIVE but got $USER_STATE. Response: $RESPONSE" >&2
+              exit 1
+            fi
+            # Simulate third-party service updating the Kubernetes User status to Inactive
+            kubectl patch user human-user --subresource=status --type=merge -p '{"status": {"state": "Inactive"}}'
+
+      # --- Verify PlatformAccess status is updated correctly ----------------------
+      - assert:
+          resource:
+            apiVersion: iam.miloapis.com/v1alpha1
+            kind: PlatformAccess
+            metadata:
+              name: human-user
+            status:
+              conditions:
+              - type: ZitadelReady
+                status: "True"
+                reason: Suspended
+
+  - name: reject-platformaccess-and-verify-active-user
+    try:
+      # --- Patch PlatformAccess to Rejected ---------------------------------------------
+      - script:
+          content: |
+            set -e
+            echo "Patching PlatformAccess to Rejected..."
+            kubectl patch platformaccess human-user --type=merge -p '{"spec": {"state": "Rejected"}}'
+
+      # --- Verify the Zitadel user is active -----------------------------------
+      - script:
+          content: |
+            set -e
+            echo "Waiting for Zitadel reconciliation for user human-user..."
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              RESPONSE=$(curl -v -s -L --show-error --insecure -H 'Host: zitadel.zitadel-system.svc.cluster.local' "${ZITADEL_DOMAIN}/v2/users/human-user" -H 'Accept: application/json' -H "Authorization: Bearer ${ZITADEL_TOKEN}")
+              USER_STATE=$(echo "$RESPONSE" | jq -r '.user.state // empty')
+              if [ "$USER_STATE" = "USER_STATE_ACTIVE" ]; then
+                echo "User successfully active in Zitadel!"
+                break
+              fi
+              echo "Waiting for state ACTIVE... (currently $USER_STATE, attempt $i/10)"
+              sleep 2
+            done
+            if [ "$USER_STATE" != "USER_STATE_ACTIVE" ]; then
+              echo "ERROR: expected USER_STATE_ACTIVE but got $USER_STATE. Response: $RESPONSE" >&2
+              exit 1
+            fi
+            # Simulate third-party service updating the Kubernetes User status back to Active
+            kubectl patch user human-user --subresource=status --type=merge -p '{"status": {"state": "Active"}}'
+
+      # --- Verify PlatformAccess status is updated correctly ----------------------
+      - assert:
+          resource:
+            apiVersion: iam.miloapis.com/v1alpha1
+            kind: PlatformAccess
+            metadata:
+              name: human-user
+            status:
+              conditions:
+              - type: ZitadelReady
+                status: "True"
+                reason: Rejected

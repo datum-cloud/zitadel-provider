@@ -1,0 +1,10 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: PlatformAccess
+metadata:
+  name: human-user
+spec:
+  # Reference to the User being deactivated (required)
+  userRef:
+    name: "human-user"
+  state: Suspended
+  reason: "E2E Test"

@@ -7,6 +7,23 @@ rules:
 - apiGroups:
   - iam.miloapis.com
   resources:
+  - platformaccesses
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - iam.miloapis.com
+  resources:
+  - platformaccesses/status
+  verbs:
+  - patch
+  - update
+- apiGroups:
+  - iam.miloapis.com
+  resources:
   - serviceaccounts
   verbs:
   - create
@@ -20,8 +37,6 @@ rules:
   - iam.miloapis.com
   resources:
   - serviceaccounts/finalizers
-  - userdeactivations/finalizers
-  - userdeactivations/status
   - users/finalizers
   verbs:
   - update
@@ -33,15 +48,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - iam.miloapis.com
-  resources:
-  - userdeactivations
-  verbs:
-  - get
-  - list
-  - update
-  - watch
 - apiGroups:
   - iam.miloapis.com
   resources:

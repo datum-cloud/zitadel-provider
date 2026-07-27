@@ -5,11 +5,6 @@ metadata:
   annotations:
     kubernetes.io/description: "Human user account for John Doe"
 spec:
-  # The email of the user (required)
   email: "john.doe@example.com"
-  
-  # The first name of the user (optional)
   givenName: "John"
-  
-  # The last name of the user (optional)
   familyName: "Doe"

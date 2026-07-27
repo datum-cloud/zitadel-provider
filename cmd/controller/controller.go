@@ -445,12 +445,12 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		os.Exit(1)
 	}
 
-	// Setup UserDeactivationController on core control plane manager
-	if err = (&controller.UserDeactivationController{
+	// Setup PlatformAccessController on core control plane manager
+	if err = (&controller.PlatformAccessController{
 		Client:  coreControlPlaneMgr.GetClient(),
 		Zitadel: zitadelHtppClient,
 	}).SetupWithManager(coreControlPlaneMgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "UserDeactivation")
+		setupLog.Error(err, "unable to create controller", "controller", "PlatformAccess")
 		os.Exit(1)
 	}
 
@@ -502,11 +502,6 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 		})
 	}
 
-	setupLog.Info("starting cluster discovery provider")
-	g.Go(func() error {
-		return ignoreCanceled(provider.Start(ctx, mgr))
-	})
-
 	setupLog.Info("starting multicluster manager")
 	g.Go(func() error {
 		return ignoreCanceled(mgr.Start(ctx))
@@ -522,7 +517,7 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 
 type runnableProvider interface {
 	multicluster.Provider
-	Start(context.Context, multicluster.Aware) error
+	multicluster.ProviderRunnable
 }
 
 // coreControlPlaneRunnable implements multicluster-runtime Runnable interface
@@ -555,7 +550,10 @@ func (p *wrappedSingleClusterProvider) Start(ctx context.Context, aware multiclu
 	if err := aware.Engage(ctx, "single", p.cluster); err != nil {
 		return err
 	}
-	return p.Provider.(runnableProvider).Start(ctx, aware)
+	if pr, ok := p.Provider.(multicluster.ProviderRunnable); ok {
+		return pr.Start(ctx, aware)
+	}
+	return nil
 }
 
 func initializeClusterDiscovery(
