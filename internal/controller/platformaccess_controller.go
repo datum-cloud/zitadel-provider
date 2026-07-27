@@ -118,6 +118,19 @@ func (r *PlatformAccessController) stateChanged(platformAccess *iammiloapiscomv1
 }
 
 func (r *PlatformAccessController) ensureZitadelUserState(ctx context.Context, userName string, expectActive bool) error {
+	userResp, err := r.Zitadel.GetUser(ctx, userName)
+	if err != nil {
+		return fmt.Errorf("failed to get user state from Zitadel: %w", err)
+	}
+
+	currentState := userResp.User.State
+	if expectActive && currentState == zitadel.UserStateActive {
+		return nil
+	}
+	if !expectActive && currentState == zitadel.UserStateInactive {
+		return nil
+	}
+
 	if expectActive {
 		return r.Zitadel.ReactivateUser(ctx, userName)
 	}
