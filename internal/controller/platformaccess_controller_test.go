@@ -91,6 +91,12 @@ var _ = ginkgo.Describe("PlatformAccessController", func() {
 		ginkgo.It("should deactivate user in Zitadel when state is Suspended", func() {
 			var deactivateCalls int32
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v2/users/john" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"user":{"state":"USER_STATE_ACTIVE"}}`))
+					return
+				}
 				if r.Method == http.MethodPost && r.URL.Path == "/v2/users/john/deactivate" {
 					atomic.AddInt32(&deactivateCalls, 1)
 					w.WriteHeader(http.StatusOK)
@@ -138,6 +144,12 @@ var _ = ginkgo.Describe("PlatformAccessController", func() {
 		ginkgo.It("should reactivate user in Zitadel for other states like Approved", func() {
 			var reactivateCalls int32
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v2/users/john" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"user":{"state":"USER_STATE_INACTIVE"}}`))
+					return
+				}
 				if r.Method == http.MethodPost && r.URL.Path == "/v2/users/john/reactivate" {
 					atomic.AddInt32(&reactivateCalls, 1)
 					w.WriteHeader(http.StatusOK)
