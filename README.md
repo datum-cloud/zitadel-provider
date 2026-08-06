@@ -5,6 +5,9 @@ Zitadel - enabling secure identity management, token generation, and account
 lifecycle management across business entities like users, organizations, and
 machine accounts.
 
+📚 **[Documentation](docs/)** — start with [architecture.md](docs/architecture.md); the binary
+ships four independent runtimes.
+
 ## Overview
 
 This project provides the authentication foundation for the [Milo business

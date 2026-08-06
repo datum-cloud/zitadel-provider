@@ -273,6 +273,6 @@ These tests can be integrated into CI/CD pipelines:
 
 ## Related Documentation
 
-- [Architecture Overview](./architecture.md)
+- [Architecture Overview](../architecture.md)
 - [Milo Identity API Documentation](https://github.com/milo-os/milo/blob/main/docs/api/identity.md)
 - [Zitadel Integration](https://zitadel.com/docs)

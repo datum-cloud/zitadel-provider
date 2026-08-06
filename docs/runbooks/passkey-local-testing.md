@@ -6,7 +6,7 @@ with it, and confirm the "passkey added" notification. This proves the whole
 chain — `auth-ui → Zitadel → zitadel-provider → Milo → cloud-portal` — on one
 machine, without staging.
 
-See also: [components/passkey-authentication.md](components/passkey-authentication.md)
+See also: [components/passkey-authentication.md](../components/passkey-authentication.md)
 for the architecture.
 
 ## Prerequisites
