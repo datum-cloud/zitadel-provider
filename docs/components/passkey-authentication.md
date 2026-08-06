@@ -67,7 +67,9 @@ Sessions whose WebAuthn factor is **user-verified** (a real passkey login) do no
 This component requires:
 
 - **Login policy** — `passwordlessType: PASSWORDLESS_TYPE_ALLOWED` on the instance/org, per environment.
-- **Actions v2** (for lifecycle notifications) — a `REST Webhook` target on the actions sidecar (`https://localhost:8888/v1/actions/...`) with event conditions for passkey add/remove, following the existing suspicious-login wiring.
+- **Actions v2** (for lifecycle notifications) — a `REST Webhook` target on the actions sidecar (`https://localhost:8888/v1/actions/...`), following the existing suspicious-login wiring. The enrollment notification binds to **`user.human.passwordless.token.verified`** — the ceremony *completion* event, whose payload carries the user-assigned `webAuthNTokenName`.
+
+  Do **not** bind it to `user.human.passwordless.token.added`. That event fires when a ceremony *starts*, so abandoned enrollments emit it too, and its payload carries no name. Both strings are bindable and were confirmed live against v4.12.2, as is `user.human.passwordless.token.removed`. Zitadel validates condition strings — a plausible-looking wrong guess is rejected with a 404 rather than silently accepted — so typos surface at configuration time. The `.added` vs `.verified` distinction does not, because both are valid. See the doc comments in `internal/httpactionsserver/passkey_added.go` for the evidence.
 - WebAuthn credentials bind to the RP ID of the login domain. Changing that domain invalidates every enrolled passkey — treat it as a one-way door.
 
 ## Dependencies
