@@ -83,6 +83,19 @@ type AbandonedUserGC struct {
 	// spec says must not merge dark, because it deletes user accounts — the
 	// blast radius has to be read from the eligible counter before anyone
 	// enables it.
+	//
+	// UNVERIFIED ASSUMPTION, READ BEFORE SETTING THIS FALSE: the sweep selects
+	// on Zitadel's IsEmailVerified, and nobody has confirmed what that reads for
+	// an account registered through Google or GitHub. Social-IdP emails are
+	// normally verified by the provider, but if they surface as false here, this
+	// sweep DELETES legitimate users who simply never used a password.
+	//
+	// The same field also drives milo's EmailVerifiedGate — but that one only
+	// denies writes and is undone by flipping a flag. This one is permanent.
+	// Confirm the signal against a real social account before disabling dry-run,
+	// and inspect who is actually in
+	// zitadel_provider_abandoned_gc_eligible_total rather than trusting the
+	// count alone.
 	DryRun bool
 
 	// now is overridable in tests.
