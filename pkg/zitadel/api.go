@@ -52,6 +52,19 @@ type IDPLink struct {
 }
 
 // Passkey represents a Zitadel WebAuthn passkey credential for a user.
+// UserMetadata is one key/value entry from a Zitadel user's metadata bag.
+//
+// Value is the DECODED string. Zitadel transports it as bytes, and every caller
+// so far wants to json.Unmarshal it — the passkey:<tokenID>:created convention
+// auth-ui writes at enrollment, whose value is JSON with a .name field. Legacy
+// entries hold a bare RFC 3339 date instead; this type carries those unchanged
+// and leaves it to the caller to fail the unmarshal and degrade.
+type UserMetadata struct {
+	Key          string
+	Value        string
+	CreationDate time.Time
+}
+
 type Passkey struct {
 	ID   string
 	Name string
@@ -71,6 +84,14 @@ type User struct {
 	// GivenName and FamilyName carry the human profile; empty for machine users.
 	GivenName  string
 	FamilyName string
+	// IsEmailVerified reports whether the user has proven ownership of Email.
+	// It is the authoritative source for milo's User.status.emailVerified and
+	// the signal abandoned-account GC selects on.
+	IsEmailVerified bool
+	// CreatedAt is when the Zitadel account was created. GC compares it against
+	// the retention window; the zero value means the API did not report one, and
+	// callers must treat that as "unknown age" rather than "ancient".
+	CreatedAt time.Time
 }
 
 // Organization represents a Zitadel organization.
@@ -109,6 +130,7 @@ type API interface {
 	GetMachineUserByUsername(ctx context.Context, orgID, username string) (*User, error)
 	AddMachineUserInOrganization(ctx context.Context, orgID, userID, username, displayName string) (createdUserID string, err error)
 	DeleteUser(ctx context.Context, userID string) error
+	ListUserMetadata(ctx context.Context, userID string) ([]UserMetadata, error)
 	DeactivateUser(ctx context.Context, orgID, userID string) error
 	ReactivateUser(ctx context.Context, orgID, userID string) error
 

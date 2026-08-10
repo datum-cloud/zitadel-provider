@@ -361,6 +361,32 @@ func (c *SDKClient) ListPasskeys(ctx context.Context, userID string) ([]Passkey,
 	return out, nil
 }
 
+// ListUserMetadata returns every metadata entry on a Zitadel user. Values are
+// returned decoded; Zitadel stores and transports them as bytes.
+func (c *SDKClient) ListUserMetadata(ctx context.Context, userID string) ([]UserMetadata, error) {
+	klog.V(2).Infof("ListUserMetadata: listing metadata for userID=%q", userID)
+
+	resp, err := c.user.ListUserMetadata(ctx, &userv2.ListUserMetadataRequest{UserId: userID})
+	if err != nil {
+		klog.Errorf("ListUserMetadata: API call failed for userID=%q: %v", userID, err)
+		return nil, fmt.Errorf("list user metadata: %w", err)
+	}
+
+	// Accessors verified against zitadel-go v3.28.0: the response field is
+	// Metadata (not Result, as the sibling list calls use), and CreationDate
+	// sits directly on the entry rather than under Details.
+	out := make([]UserMetadata, 0, len(resp.GetMetadata()))
+	for _, m := range resp.GetMetadata() {
+		out = append(out, UserMetadata{
+			Key:          m.GetKey(),
+			Value:        string(m.GetValue()),
+			CreationDate: toTime(m.GetCreationDate()),
+		})
+	}
+	klog.V(2).Infof("ListUserMetadata: found %d entr(ies) for userID=%q", len(out), userID)
+	return out, nil
+}
+
 // CreateOrganization creates a new organization in Zitadel with a custom name.
 // Returns the organization ID.
 func (c *SDKClient) CreateOrganization(ctx context.Context, name string) (string, error) {
@@ -621,12 +647,17 @@ func (c *SDKClient) ListHumanUsers(ctx context.Context, offset uint64, limit uin
 			continue
 		}
 		users = append(users, User{
-			ID:         user.GetUserId(),
-			Username:   localIdentityUsername(user),
-			Email:      human.GetEmail().GetEmail(),
-			State:      user.GetState().String(),
-			GivenName:  human.GetProfile().GetGivenName(),
-			FamilyName: human.GetProfile().GetFamilyName(),
+			ID:              user.GetUserId(),
+			Username:        localIdentityUsername(user),
+			Email:           human.GetEmail().GetEmail(),
+			State:           user.GetState().String(),
+			GivenName:       human.GetProfile().GetGivenName(),
+			FamilyName:      human.GetProfile().GetFamilyName(),
+			IsEmailVerified: human.GetEmail().GetIsVerified(),
+			// toTime, not AsTime: a nil timestamp maps to the Unix EPOCH under
+			// AsTime, and abandoned-account GC treats a zero CreatedAt as
+			// "unknown age, skip". Epoch would read as ancient and delete it.
+			CreatedAt: toTime(user.GetDetails().GetCreationDate()),
 		})
 	}
 
