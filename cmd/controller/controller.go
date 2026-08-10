@@ -122,6 +122,12 @@ and manages the auth provider lifecycle.`,
 	cmd.Flags().StringVar(&cfg.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	cmd.Flags().DurationVar(&cfg.UserSweepInterval, "user-sweep-interval", cfg.UserSweepInterval,
 		"Interval between Zitadel user sweeps that provision missing User resources on the core control plane. Set to 0 to disable.")
+	cmd.Flags().DurationVar(&cfg.AbandonedAccountRetention, "abandoned-account-retention", cfg.AbandonedAccountRetention,
+		"How long an unverified account is kept before it becomes eligible for collection. Zero or negative disables the sweep.")
+	cmd.Flags().DurationVar(&cfg.AbandonedAccountGCInterval, "abandoned-account-gc-interval", cfg.AbandonedAccountGCInterval,
+		"How often the abandoned-account sweep runs. Zero or negative disables it.")
+	cmd.Flags().BoolVar(&cfg.AbandonedAccountGCDryRun, "abandoned-account-gc-dry-run", cfg.AbandonedAccountGCDryRun,
+		"Report which abandoned accounts would be collected without deleting them. Defaults TRUE because this deletes user accounts.")
 
 	// Leader election flags
 	cmd.Flags().BoolVar(&cfg.LeaderElection.Enabled, "leader-elect", cfg.LeaderElection.Enabled, "Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -465,6 +471,20 @@ func runController(cfg *config.ControllerConfig, globalConfig *config.GlobalConf
 
 	// Ensure every Zitadel human user has a User resource; runs
 	// only after leader election via the core control plane manager.
+	// Collect accounts abandoned before email verification. Dry-run by default:
+	// this deletes user accounts, so the eligible counter must be read before
+	// anyone enables it.
+	if err := coreControlPlaneMgr.Add(&controller.AbandonedUserGC{
+		Client:    coreControlPlaneMgr.GetClient(),
+		Zitadel:   zitadelSDKClient,
+		Interval:  cfg.AbandonedAccountGCInterval,
+		Retention: cfg.AbandonedAccountRetention,
+		DryRun:    cfg.AbandonedAccountGCDryRun,
+	}); err != nil {
+		setupLog.Error(err, "unable to add abandoned-account GC")
+		os.Exit(1)
+	}
+
 	if err := coreControlPlaneMgr.Add(&controller.UserSweeper{
 		Client:   coreControlPlaneMgr.GetClient(),
 		Zitadel:  zitadelSDKClient,
