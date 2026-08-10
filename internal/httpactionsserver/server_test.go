@@ -25,7 +25,18 @@ import (
 )
 
 type mockZitadelAPI struct {
-	listSessionsFunc func(ctx context.Context, userID string) ([]zitadel.Session, error)
+	listSessionsFunc     func(ctx context.Context, userID string) ([]zitadel.Session, error)
+	listUserMetadataFunc func(ctx context.Context, userID string) ([]zitadel.UserMetadata, error)
+}
+
+// ListUserMetadata backs A-PR2's passkey-name lookup. Left nil it returns
+// (nil, nil), which is the "key absent" degradation — one of the five paths
+// that must still send the removal email, just without the name.
+func (m *mockZitadelAPI) ListUserMetadata(ctx context.Context, userID string) ([]zitadel.UserMetadata, error) {
+	if m.listUserMetadataFunc != nil {
+		return m.listUserMetadataFunc(ctx, userID)
+	}
+	return nil, nil
 }
 
 func (m *mockZitadelAPI) ListSessions(ctx context.Context, userID string) ([]zitadel.Session, error) {
