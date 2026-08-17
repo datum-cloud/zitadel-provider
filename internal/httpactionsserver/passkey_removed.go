@@ -112,9 +112,7 @@ func sendPasskeyRemovedEmail(ctx context.Context, log logr.Logger, s *Server, us
 		{Name: "UserName", Value: displayName},
 		{Name: "RemovedTime", Value: removedDisplay},
 	}
-	// Omitted, never empty. The template declares PasskeyName optional and
-	// guards it with a Go {{if}}, so an absent variable renders the degraded
-	// branch; an empty one renders a blank label.
+	// Omitted when the name cannot be established, rather than sent empty.
 	if name := passkeyNameFromMetadata(ctx, s.zitadelClient, userID, tokenID); name != "" {
 		vars = append(vars, notificationv1alpha1.EmailVariable{Name: "PasskeyName", Value: name})
 	}

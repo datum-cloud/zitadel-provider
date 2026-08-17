@@ -55,19 +55,15 @@ type ZitadelUserReaper interface {
 
 // AbandonedUserGC deletes accounts abandoned before email verification.
 //
-// The population is narrow by construction. Wave 0 established that a user who
-// never verifies never obtains a session and therefore never reaches onboarding
-// billing, so such an account owns exactly: one Zitadel user, one milo User,
-// and the User's owner-referenced children (two PolicyBindings and a
-// UserPreference) which Kubernetes garbage-collects with it. There is no
-// organization, membership or quota to unwind — this is not a subtree walk.
+// Such an account owns one Zitadel user, one milo User, and the User's
+// owner-referenced children (two PolicyBindings and a UserPreference), which
+// Kubernetes garbage-collects with it. No organization, membership or quota.
 //
-// ORDERING IS NOT OPTIONAL: the Zitadel user is deleted FIRST, then the milo
-// User. UserSweeper recreates a User resource for every Zitadel human user
-// "regardless of state" on every tick, so deleting the milo User first means
-// the next sweep resurrects it and the two controllers fight indefinitely —
-// silently, with zitadel_provider_user_sweep_created_total as the only symptom
-// anyone would ever see.
+// ORDERING IS NOT OPTIONAL: delete the Zitadel user FIRST, then the milo User.
+// UserSweeper recreates a User for every Zitadel human user on every tick, so
+// the reverse order lets the next sweep resurrect it and the two controllers
+// fight indefinitely, with zitadel_provider_user_sweep_created_total as the only
+// symptom.
 type AbandonedUserGC struct {
 	Client  client.Client
 	Zitadel ZitadelUserReaper
@@ -77,25 +73,19 @@ type AbandonedUserGC struct {
 	// Retention is how long an unverified account is kept. Non-positive
 	// disables the sweep: it must never be read as "delete everything".
 	Retention time.Duration
-	// DryRun reports what would be collected without deleting anything.
+	// DryRun reports what would be collected without deleting anything. Defaults
+	// true: this deletes user accounts, so read the eligible counter first.
 	//
-	// Defaults true at the flag. This is one of exactly two Phase B items the
-	// spec says must not merge dark, because it deletes user accounts — the
-	// blast radius has to be read from the eligible counter before anyone
-	// enables it.
+	// UNVERIFIED ASSUMPTION, READ BEFORE SETTING THIS FALSE: the sweep selects on
+	// Zitadel's IsEmailVerified, and nobody has confirmed what that reads for an
+	// account registered through Google or GitHub. If social-IdP emails surface
+	// as false here, this DELETES legitimate users who simply never used a
+	// password.
 	//
-	// UNVERIFIED ASSUMPTION, READ BEFORE SETTING THIS FALSE: the sweep selects
-	// on Zitadel's IsEmailVerified, and nobody has confirmed what that reads for
-	// an account registered through Google or GitHub. Social-IdP emails are
-	// normally verified by the provider, but if they surface as false here, this
-	// sweep DELETES legitimate users who simply never used a password.
-	//
-	// The same field also drives milo's EmailVerifiedGate — but that one only
-	// denies writes and is undone by flipping a flag. This one is permanent.
-	// Confirm the signal against a real social account before disabling dry-run,
-	// and inspect who is actually in
-	// zitadel_provider_abandoned_gc_eligible_total rather than trusting the
-	// count alone.
+	// milo's gate reads the same field but only denies writes and is undone by a
+	// flag; this is permanent. Confirm against a real social account, and inspect
+	// who is in zitadel_provider_abandoned_gc_eligible_total rather than trusting
+	// the count alone.
 	DryRun bool
 
 	// now is overridable in tests.

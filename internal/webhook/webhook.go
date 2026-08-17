@@ -46,16 +46,9 @@ func NewAuthenticationWebhookV1(introspector *token.Introspector) *Webhook {
 			}
 			sub := claims.Sub
 
-			// The email claim is the human/machine discriminator, and it is
-			// already the one this webhook trusts: EffectiveUsername treats a
-			// present email as "human" and only falls back to client_id or
-			// username for machine identities. Do not switch to client_id here —
-			// a human's token also carries the client_id of whatever app
-			// requested it, so client_id presence proves nothing either way.
-			//
-			// nil means "machine identity, leave the key off"; a non-nil pointer
-			// means "human, stamp whatever we got, including false". Absence and
-			// falseness are not interchangeable — see authenticationResponse.
+			// Email presence is the human/machine discriminator, matching
+			// EffectiveUsername. nil leaves the key off for machine identities;
+			// see Allowed for why absence and false are not interchangeable.
 			var emailVerified *bool
 			if claims.Email != "" {
 				verified := claims.EmailVerified
