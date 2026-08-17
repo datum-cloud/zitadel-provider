@@ -45,7 +45,24 @@ func NewAuthenticationWebhookV1(introspector *token.Introspector) *Webhook {
 				return Denied("token introspection failed: " + err.Error())
 			}
 			sub := claims.Sub
-			return Allowed(username, sub)
+
+			// The email claim is the human/machine discriminator, and it is
+			// already the one this webhook trusts: EffectiveUsername treats a
+			// present email as "human" and only falls back to client_id or
+			// username for machine identities. Do not switch to client_id here —
+			// a human's token also carries the client_id of whatever app
+			// requested it, so client_id presence proves nothing either way.
+			//
+			// nil means "machine identity, leave the key off"; a non-nil pointer
+			// means "human, stamp whatever we got, including false". Absence and
+			// falseness are not interchangeable — see authenticationResponse.
+			var emailVerified *bool
+			if claims.Email != "" {
+				verified := claims.EmailVerified
+				emailVerified = &verified
+			}
+
+			return Allowed(username, sub, emailVerified)
 		}),
 		Endpoint: "/apis/authentication.k8s.io/v1/tokenreviews",
 	}
