@@ -112,10 +112,13 @@ func sendPasskeyRemovedEmail(ctx context.Context, log logr.Logger, s *Server, us
 		{Name: "UserName", Value: displayName},
 		{Name: "RemovedTime", Value: removedDisplay},
 	}
-	// Omitted when the name cannot be established, rather than sent empty.
-	if name := passkeyNameFromMetadata(ctx, s.zitadelClient, userID, tokenID); name != "" {
-		vars = append(vars, notificationv1alpha1.EmailVariable{Name: "PasskeyName", Value: name})
-	}
+	// Always sent, "" when unknown — the contract passkey_added.go uses for
+	// Browser/Device. The template renders this row unconditionally, so an
+	// omitted variable renders Go's `<no value>` into the text body.
+	vars = append(vars, notificationv1alpha1.EmailVariable{
+		Name:  "PasskeyName",
+		Value: passkeyNameFromMetadata(ctx, s.zitadelClient, userID, tokenID),
+	})
 
 	email := &notificationv1alpha1.Email{
 		TypeMeta: metav1.TypeMeta{
@@ -158,7 +161,7 @@ func sendPasskeyRemovedEmail(ctx context.Context, log logr.Logger, s *Server, us
 //  4. the value is a legacy bare ISO date rather than JSON
 //  5. the value is malformed JSON
 //
-// All five return "", and the caller then omits the variable entirely.
+// All five return "", which the caller sends as the variable's value.
 func passkeyNameFromMetadata(ctx context.Context, api zitadel.API, userID, tokenID string) string {
 	if api == nil || tokenID == "" {
 		return ""

@@ -102,7 +102,7 @@ func TestPasskeyRemoved_JSONMetadata_IncludesName(t *testing.T) {
 // The five degradations. Each SENDS the email with PasskeyName absent — not
 // empty. An empty value renders a blank label, which is the defect the design
 // removed; an absent one renders the guarded branch.
-func TestPasskeyRemoved_DegradationsOmitName(t *testing.T) {
+func TestPasskeyRemoved_DegradationsSendEmptyName(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		api  zitadel.API
@@ -121,8 +121,12 @@ func TestPasskeyRemoved_DegradationsOmitName(t *testing.T) {
 			}
 
 			vars := removedEmailVars(t, k8s)
-			if _, present := vars["PasskeyName"]; present {
-				t.Fatalf("PasskeyName must be OMITTED, not sent as %q", vars["PasskeyName"])
+			name, present := vars["PasskeyName"]
+			if !present {
+				t.Fatal(`PasskeyName must ALWAYS be sent; an omitted variable renders "<no value>"`)
+			}
+			if name != "" {
+				t.Fatalf("a degraded path must send an empty name, got %q", name)
 			}
 			if vars["UserName"] == "" || vars["RemovedTime"] == "" {
 				t.Fatal("the email must still carry UserName and RemovedTime")
