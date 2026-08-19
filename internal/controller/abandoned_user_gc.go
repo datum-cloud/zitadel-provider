@@ -35,6 +35,11 @@ var (
 		Name: "zitadel_provider_abandoned_gc_deleted_total",
 		Help: "Abandoned accounts actually deleted.",
 	})
+	abandonedSkippedIDP = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "zitadel_provider_abandoned_gc_skipped_idp_total",
+		Help: "Accounts past the retention window that were spared because they carry an external IdP link.",
+	})
+
 	abandonedErrors = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "zitadel_provider_abandoned_gc_errors_total",
 		Help: "Errors encountered while collecting abandoned accounts.",
@@ -42,12 +47,13 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(abandonedScanned, abandonedEligible, abandonedDeleted, abandonedErrors)
+	metrics.Registry.MustRegister(abandonedScanned, abandonedEligible, abandonedDeleted, abandonedSkippedIDP, abandonedErrors)
 }
 
 // ZitadelUserReaper is the narrow surface the sweep needs.
 type ZitadelUserReaper interface {
 	ListHumanUsers(ctx context.Context, offset uint64, limit uint32) ([]zitadel.User, int, error)
+	ListIDPLinks(ctx context.Context, userID string) ([]zitadel.IDPLink, error)
 	DeleteUser(ctx context.Context, userID string) error
 }
 
@@ -76,16 +82,17 @@ type AbandonedUserGC struct {
 	// DryRun reports what would be collected without deleting anything. Defaults
 	// true: this deletes user accounts, so read the eligible counter first.
 	//
-	// UNVERIFIED ASSUMPTION, READ BEFORE SETTING THIS FALSE: the sweep selects on
-	// Zitadel's IsEmailVerified, and nobody has confirmed what that reads for an
-	// account registered through Google or GitHub. If social-IdP emails surface
-	// as false here, this DELETES legitimate users who simply never used a
-	// password.
+	// The sweep selects on Zitadel's IsEmailVerified, and nobody has confirmed
+	// what that reads for an account registered through Google or GitHub. That
+	// used to make this dangerous: if social-IdP emails surfaced as false, the
+	// sweep deleted legitimate users who simply never used a password.
 	//
-	// milo's gate reads the same field but only denies writes and is undone by a
-	// flag; this is permanent. Confirm against a real social account, and inspect
-	// who is in zitadel_provider_abandoned_gc_eligible_total rather than trusting
-	// the count alone.
+	// Accounts carrying an external IdP link are now skipped outright, so the
+	// outcome no longer depends on that unknown. Deletion is still permanent:
+	// inspect who is in zitadel_provider_abandoned_gc_eligible_total rather than
+	// trusting the count, and check that
+	// zitadel_provider_abandoned_gc_skipped_idp_total is non-zero — a flat zero
+	// against a real population means the link lookup is not doing its job.
 	DryRun bool
 
 	// now is overridable in tests.
@@ -137,6 +144,35 @@ func (g *AbandonedUserGC) sweepOnce(ctx context.Context) error {
 			if !g.isAbandoned(u, cutoff) {
 				continue
 			}
+			// Never collect an account that came from an external IdP.
+			//
+			// isAbandoned selects on Zitadel's IsEmailVerified, and nobody has
+			// confirmed what that reads for a Google or GitHub registration. If
+			// it reports false for them, the sweep deletes users whose address
+			// their provider verified years ago — permanently. Checking for a
+			// link makes the outcome independent of that unknown instead of
+			// conditional on it: whatever IsEmailVerified says, a social account
+			// is never a candidate.
+			//
+			// The check runs here rather than inside isAbandoned because it is
+			// an API call. Only accounts already past the retention window and
+			// already unverified reach it, so it costs one request per
+			// candidate, not per user.
+			linked, err := g.hasIDPLink(ctx, u.ID)
+			if err != nil {
+				// Skip, do not delete. An unreadable link list is not evidence
+				// that there are none, and this loop's mistakes are not
+				// recoverable.
+				abandonedErrors.Inc()
+				log.Error(err, "Skipping account: could not read IdP links", "userID", u.ID)
+				continue
+			}
+			if linked {
+				abandonedSkippedIDP.Inc()
+				log.V(1).Info("Skipping account with an external IdP link", "userID", u.ID)
+				continue
+			}
+
 			eligible++
 			abandonedEligible.Inc()
 
@@ -164,6 +200,16 @@ func (g *AbandonedUserGC) sweepOnce(ctx context.Context) error {
 	log.Info("Abandoned-account sweep complete",
 		"eligible", eligible, "deleted", deleted, "dryRun", g.DryRun)
 	return nil
+}
+
+// hasIDPLink reports whether the account was registered through an external
+// identity provider.
+func (g *AbandonedUserGC) hasIDPLink(ctx context.Context, userID string) (bool, error) {
+	links, err := g.Zitadel.ListIDPLinks(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("list idp links for %s: %w", userID, err)
+	}
+	return len(links) > 0, nil
 }
 
 // isAbandoned reports whether an account is unverified and past the window.

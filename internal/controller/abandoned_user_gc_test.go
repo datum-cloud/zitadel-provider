@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,17 @@ type reaper struct {
 	listErr   error
 	deleteErr error
 	calls     *[]string
+	// idpLinks maps user ID to their external IdP links. Absent means none,
+	// which is what a password-only signup looks like.
+	idpLinks   map[string][]zitadel.IDPLink
+	idpLinkErr error
+}
+
+func (r *reaper) ListIDPLinks(_ context.Context, userID string) ([]zitadel.IDPLink, error) {
+	if r.idpLinkErr != nil {
+		return nil, r.idpLinkErr
+	}
+	return r.idpLinks[userID], nil
 }
 
 func (r *reaper) ListHumanUsers(context.Context, uint64, uint32) ([]zitadel.User, int, error) {
@@ -251,5 +263,56 @@ func TestAbandonedGC_EpochIsNotTreatedAsUnknown(t *testing.T) {
 	zero.ID = "u2"
 	if g.isAbandoned(zero, gcNow.Add(-30*24*time.Hour)) {
 		t.Fatal("a ZERO CreatedAt means unknown age and must be skipped — if the mapping ever produces epoch instead of zero, this is the account that gets wrongly deleted")
+	}
+}
+
+// An account that came from an external IdP is never collected. isAbandoned
+// selects on Zitadel's IsEmailVerified, and nobody has confirmed what that
+// reports for a Google or GitHub registration. If it says false for them, an
+// unguarded sweep permanently deletes users whose provider verified their
+// address years ago. The link check makes the outcome independent of that
+// unknown rather than conditional on it.
+func TestAbandonedGC_SkipsAccountsWithIDPLinks(t *testing.T) {
+	users := []zitadel.User{unverified("social", 60), unverified("password", 60)}
+	g, calls, c := newGC(t, users, false)
+	g.Zitadel = &reaper{
+		users:    users,
+		calls:    calls,
+		idpLinks: map[string][]zitadel.IDPLink{"social": {{IDPID: "google"}}},
+	}
+
+	sweep(t, g)
+
+	for _, call := range *calls {
+		if strings.Contains(call, "social") {
+			t.Fatalf("collected an account with an IdP link, got %v", *calls)
+		}
+	}
+	if !miloUserExists(t, c, "social") {
+		t.Fatal("milo User for the social account must survive")
+	}
+	if miloUserExists(t, c, "password") {
+		t.Fatal("the password-only account should still have been collected")
+	}
+}
+
+// Fails closed: an unreadable link list is not evidence that there are none,
+// and this loop's mistakes cannot be undone.
+func TestAbandonedGC_SkipsWhenIDPLinksUnreadable(t *testing.T) {
+	users := []zitadel.User{unverified("u1", 60)}
+	g, calls, c := newGC(t, users, false)
+	g.Zitadel = &reaper{
+		users:      users,
+		calls:      calls,
+		idpLinkErr: errors.New("zitadel unavailable"),
+	}
+
+	sweep(t, g)
+
+	if len(*calls) != 0 {
+		t.Fatalf("must not delete when IdP links cannot be read, got %v", *calls)
+	}
+	if !miloUserExists(t, c, "u1") {
+		t.Fatal("milo User must survive an unreadable link list")
 	}
 }
