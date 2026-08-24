@@ -34,6 +34,15 @@ type IntrospectionData struct {
 	Email    string `json:"email,omitempty"`
 	Username string `json:"username,omitempty"`
 	ClientID string `json:"client_id,omitempty"`
+
+	// EmailVerified mirrors the OIDC email_verified claim.
+	//
+	// A false value is NOT proof the address is unverified: Zitadel builds its
+	// introspection body from oidc.IntrospectionResponse, which tags the field
+	// omitempty — so false is dropped from the wire and is indistinguishable from
+	// a claim never emitted (e.g. a token issued without the "email" scope). The
+	// webhook collapses that ambiguity to "not verified"; see response.go.
+	EmailVerified bool `json:"email_verified,omitempty"`
 }
 
 // EffectiveUsername determines the most appropriate username to use from the

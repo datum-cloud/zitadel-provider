@@ -108,6 +108,18 @@ type ControllerConfig struct {
 	// resources on the core control plane. Zero disables the sweeper.
 	UserSweepInterval time.Duration
 
+	// AbandonedAccountRetention is how long an unverified account is kept
+	// before it becomes eligible for collection. Non-positive disables the
+	// sweep; it must never be read as "delete everything".
+	AbandonedAccountRetention time.Duration
+	// AbandonedAccountGCInterval is how often the abandoned-account sweep runs.
+	// Non-positive disables it.
+	AbandonedAccountGCInterval time.Duration
+	// AbandonedAccountGCDryRun reports what would be collected without deleting
+	// anything. Defaults TRUE: this sweep deletes user accounts, so merging it
+	// must not be the same as enabling it.
+	AbandonedAccountGCDryRun bool
+
 	// Zitadel connection details
 	Zitadel ZitadelConfig
 }
@@ -118,6 +130,12 @@ func NewControllerConfig() *ControllerConfig {
 		ProbeAddr:         ":8081",
 		EnableHTTP2:       false,
 		UserSweepInterval: 10 * time.Minute,
+
+		// Mirrors controller.DefaultAbandonedRetention / DefaultAbandonedGCInterval;
+		// duplicated as literals because config must not import controller.
+		AbandonedAccountRetention:  30 * 24 * time.Hour,
+		AbandonedAccountGCInterval: 6 * time.Hour,
+		AbandonedAccountGCDryRun:   true,
 		LeaderElection: LeaderElectionConfig{
 			Enabled:         false,
 			ID:              "auth-provider-zitadel-leader",

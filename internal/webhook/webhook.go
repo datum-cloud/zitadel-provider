@@ -45,7 +45,17 @@ func NewAuthenticationWebhookV1(introspector *token.Introspector) *Webhook {
 				return Denied("token introspection failed: " + err.Error())
 			}
 			sub := claims.Sub
-			return Allowed(username, sub)
+
+			// Email presence is the human/machine discriminator, matching
+			// EffectiveUsername. nil leaves the key off for machine identities;
+			// see Allowed for why absence and false are not interchangeable.
+			var emailVerified *bool
+			if claims.Email != "" {
+				verified := claims.EmailVerified
+				emailVerified = &verified
+			}
+
+			return Allowed(username, sub, emailVerified)
 		}),
 		Endpoint: "/apis/authentication.k8s.io/v1/tokenreviews",
 	}

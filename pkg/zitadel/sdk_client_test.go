@@ -2,6 +2,7 @@ package zitadel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -213,5 +214,39 @@ func TestMapZitadelSessionPasskeyVerified(t *testing.T) {
 				t.Errorf("PasskeyVerified = %v, want %v", s.PasskeyVerified, tt.want)
 			}
 		})
+	}
+}
+
+// A-PR1. Zitadel transports metadata values as bytes; the domain type exposes a
+// decoded string, because every caller so far wants to json.Unmarshal it — the
+// passkey:<tokenID>:created convention auth-ui writes at enrollment.
+func TestUserMetadata_DecodesValueForJSONUnmarshal(t *testing.T) {
+	m := UserMetadata{Key: "passkey:abc123:created", Value: `{"name":"iCloud Keychain"}`}
+
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(m.Value), &payload); err != nil {
+		t.Fatalf("value must be JSON-decodable without further decoding: %v", err)
+	}
+	if payload.Name != "iCloud Keychain" {
+		t.Fatalf("got %q, want %q", payload.Name, "iCloud Keychain")
+	}
+}
+
+// Legacy entries hold a bare ISO date rather than JSON. The type must carry
+// them without loss; it is the caller's job to fail the unmarshal and omit the
+// passkey name (the passkey-removed design's fifth degradation path).
+func TestUserMetadata_CarriesLegacyBareValue(t *testing.T) {
+	m := UserMetadata{Key: "passkey:legacy:created", Value: "2026-01-02T15:04:05Z"}
+
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(m.Value), &payload); err == nil {
+		t.Fatal("a bare ISO value must fail JSON unmarshal, so the caller omits the name")
+	}
+	if m.Value != "2026-01-02T15:04:05Z" {
+		t.Fatalf("value must round-trip unmodified, got %q", m.Value)
 	}
 }
