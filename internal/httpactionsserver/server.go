@@ -49,34 +49,6 @@ type ServerConfig struct {
 	// notification (unconfigured means skip), matching
 	// PasskeyAddedEmailTemplate.
 	PasskeyRemovedEmailTemplate string
-	// EmailProviderSigningKey validates POSTs from Zitadel's HTTP email
-	// provider. This is NOT the Actions SigningKey above: Zitadel generates it
-	// when the provider is created (POST /admin/v1/email/http) and returns it
-	// once, in the create response. Pulumi must capture it there and deliver it
-	// here BEFORE activation — activating with the wrong key means Zitadel
-	// accepts every mail and this server rejects every mail, with SMTP already
-	// disabled.
-	EmailProviderSigningKey string
-	// EmailVerificationTemplate renders user.human.email.code.added. An empty
-	// value disables the notification (unconfigured means skip).
-	EmailVerificationTemplate string
-	// EmailVerificationURLTemplate is auth-ui's verification page, with named
-	// placeholders: "https://auth.datum.net/verify-email?code={code}&userID={userID}".
-	// Supported placeholders are {code}, {userID} and {orgID}.
-	//
-	// Zitadel's own templateData.url is ignored: it targets Zitadel's built-in
-	// login UI, which auth-ui replaces.
-	EmailVerificationURLTemplate string
-	// EmailVerificationExpiryMinutes is shown to the user as the code's
-	// lifetime. Zitadel does not transmit an expiry, so this MIRRORS Zitadel's
-	// configured lifetime and will drift silently if that setting changes.
-	EmailVerificationExpiryMinutes int
-	// PasswordResetTemplate renders user.human.password.code.added.
-	//
-	// Not a Phase B feature, but activating the HTTP provider disables SMTP for
-	// EVERY Zitadel mail, so password reset becomes this server's
-	// responsibility too. Leaving it empty stops password-reset mail.
-	PasswordResetTemplate string
 	// NotificationNamespace is the namespace in which Email resources are created.
 	NotificationNamespace string
 	// GraphQLGatewayURL is the endpoint of the internal GraphQL gateway used
@@ -232,7 +204,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/actions/session-added", s.sessionAddedHandler)
 	mux.HandleFunc("/v1/actions/passkey-added", s.passkeyAddedHandler)
 	mux.HandleFunc("/v1/actions/passkey-removed", s.passkeyRemovedHandler)
-	mux.HandleFunc("/v1/actions/email-provider", s.emailProviderHandler)
+
+	// No /v1/actions/email-provider route: Zitadel's HTTP email provider was
+	// removed here. On v4.12.2 it accepted activation and the config round-trip
+	// succeeded, but it never actually dispatched a POST — verified live, zero
+	// connection attempts. Signup verification mail is delivered instead via
+	// internal/webhook/emailverification.go, which auth-ui calls with a
+	// return_code obtained directly from Zitadel. If a future Zitadel version
+	// fixes dispatch, the removed receiver is in git history (see the commit
+	// that deleted internal/httpactionsserver/email_provider.go).
 
 	srv := &http.Server{
 		Addr:    s.config.Addr,

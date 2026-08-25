@@ -5,8 +5,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+	notificationv1alpha1 "go.miloapis.com/milo/pkg/apis/notification/v1alpha1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -46,6 +49,22 @@ func NewAuthenticationWebhookServerCommand(globalConfig *config.GlobalConfig) *c
 
 	// Metrics flags.
 	cmd.Flags().StringVar(&cfg.MetricsBindAddress, "metrics-bind-address", ":8080", "address the metrics endpoint binds to")
+
+	// Email verification flags.
+	cmd.Flags().StringVar(&cfg.EmailVerificationTemplate, "email-verification-template", cfg.EmailVerificationTemplate,
+		"EmailTemplate resource for signup verification mail; empty disables the endpoint")
+	cmd.Flags().StringVar(&cfg.NotificationNamespace, "notification-namespace", "milo-system",
+		"Namespace in which Email resources are created")
+	cmd.Flags().StringSliceVar(&cfg.EmailVerificationAllowedOrigins, "email-verification-allowed-origins", nil,
+		"Allowlisted origins for returnTo, e.g. https://auth.example.net,http://localhost:3000")
+	cmd.Flags().IntVar(&cfg.EmailVerificationExpiryMinutes, "email-verification-expiry-minutes", 60,
+		"Code lifetime shown to users; must match Zitadel's configured lifetime")
+	cmd.Flags().IntVar(&cfg.EmailVerificationUserLookupAttempts, "email-verification-user-lookup-attempts", 5,
+		"Retry count when the verification request arrives before create-user-account has provisioned the Milo User")
+	cmd.Flags().DurationVar(&cfg.EmailVerificationUserLookupBaseWait, "email-verification-user-lookup-base-wait", 200*time.Millisecond,
+		"Initial backoff between email-verification user lookup retries")
+	cmd.Flags().StringVar(&cfg.ClientCAFile, "client-ca-file", cfg.ClientCAFile,
+		"CA bundle used to verify client certificates (mTLS)")
 
 	return cmd
 }
@@ -89,6 +108,12 @@ func runWebhookServer(cmd *cobra.Command, cfg *config.WebhookServerConfig) error
 	if err := authenticationv1.AddToScheme(runtimeScheme); err != nil {
 		return fmt.Errorf("failed to add authenticationv1 scheme: %w", err)
 	}
+	if err := iamv1alpha1.AddToScheme(runtimeScheme); err != nil {
+		return fmt.Errorf("failed to add iam scheme: %w", err)
+	}
+	if err := notificationv1alpha1.AddToScheme(runtimeScheme); err != nil {
+		return fmt.Errorf("failed to add notification scheme: %w", err)
+	}
 
 	log.Info("Creating manager")
 	mgr, err := manager.New(restConfig, manager.Options{
@@ -97,10 +122,11 @@ func runWebhookServer(cmd *cobra.Command, cfg *config.WebhookServerConfig) error
 			BindAddress: cfg.MetricsBindAddress,
 		},
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
-			CertDir:  cfg.CertDir,
-			CertName: cfg.CertFile,
-			KeyName:  cfg.KeyFile,
-			Port:     cfg.WebhookPort,
+			CertDir:      cfg.CertDir,
+			CertName:     cfg.CertFile,
+			KeyName:      cfg.KeyFile,
+			ClientCAName: cfg.ClientCAFile,
+			Port:         cfg.WebhookPort,
 		}),
 	})
 	if err != nil {
@@ -112,6 +138,29 @@ func runWebhookServer(cmd *cobra.Command, cfg *config.WebhookServerConfig) error
 
 	webhookv1 := webhook.NewAuthenticationWebhookV1(introspector)
 	hookServer.Register(webhookv1.Endpoint, webhookv1)
+
+	if cfg.EmailVerificationTemplate != "" {
+		// Uncached client: this reads a single User per request. The manager's cached
+		// client would start an informer over every User for no benefit.
+		directClient, err := client.New(restConfig, client.Options{Scheme: runtimeScheme})
+		if err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+		verify := webhook.NewEmailVerificationHandler(directClient, webhook.EmailVerificationConfig{
+			TemplateName:          cfg.EmailVerificationTemplate,
+			NotificationNamespace: cfg.NotificationNamespace,
+			AllowedOrigins:        cfg.EmailVerificationAllowedOrigins,
+			ExpiryMinutes:         cfg.EmailVerificationExpiryMinutes,
+			UserLookupAttempts:    cfg.EmailVerificationUserLookupAttempts,
+			UserLookupBaseWait:    cfg.EmailVerificationUserLookupBaseWait,
+		})
+		hookServer.Register(verify.Endpoint, verify)
+		log.Info("Registered email verification endpoint",
+			"endpoint", verify.Endpoint,
+			"allowedOrigins", cfg.EmailVerificationAllowedOrigins)
+	} else {
+		log.Info("Email verification endpoint disabled; no template configured")
+	}
 
 	log.Info("Starting manager")
 	return mgr.Start(cmd.Context())
