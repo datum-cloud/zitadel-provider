@@ -93,12 +93,8 @@ func (h *EmailVerificationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.createEmail(r.Context(), user, req); err != nil {
-		// Bounded, not the raw error: req.Code (a bearer credential) is embedded in the
-		// Email resource's Variables, and an apiserver validation rejection's message
-		// ("Invalid value: ...") can echo a submitted field value straight back — every
-		// other log site in this handler is deliberately clean of request-controlled
-		// content (see the returnTo-rejection comment above). ReasonForError is a short,
-		// fixed-vocabulary reason (e.g. "Invalid", "Timeout", "Forbidden"), never the code.
+		// Not the raw error: the code sits in this Email's Variables, and an apiserver
+		// rejection can echo a submitted value straight back. Reason is fixed vocabulary.
 		reason := apierrors.ReasonForError(err)
 		log.Error(fmt.Errorf("apiserver rejected Email create: %s", reason),
 			"Failed to create verification Email", "userId", req.UserID)
