@@ -107,9 +107,9 @@ func (h *EmailVerificationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	_, _ = w.Write([]byte("ok"))
 }
 
-// originAllowed compares parsed scheme+host, not string prefixes: a prefix test
-// admits "https://auth.example.test.evil.com" for an allowlisted
-// "https://auth.example.test".
+// originAllowed is the phishing guard: without it a compromised auth-ui could have
+// us mail a real, working code pointing at any domain. Parsed scheme+host rather
+// than a prefix, which would admit "https://auth.example.test.evil.com".
 func (h *EmailVerificationHandler) originAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
