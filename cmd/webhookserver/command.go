@@ -53,23 +53,42 @@ func NewAuthenticationWebhookServerCommand(globalConfig *config.GlobalConfig) *c
 	// Email verification flags.
 	cmd.Flags().StringVar(&cfg.EmailVerificationTemplate, "email-verification-template", cfg.EmailVerificationTemplate,
 		"EmailTemplate resource for signup verification mail; empty disables the endpoint")
-	cmd.Flags().StringVar(&cfg.NotificationNamespace, "notification-namespace", "milo-system",
+	cmd.Flags().StringVar(&cfg.NotificationNamespace, "notification-namespace", cfg.NotificationNamespace,
 		"Namespace in which Email resources are created")
 	cmd.Flags().StringSliceVar(&cfg.EmailVerificationAllowedOrigins, "email-verification-allowed-origins", nil,
 		"Allowlisted origins for returnTo, e.g. https://auth.example.net,http://localhost:3000")
-	cmd.Flags().IntVar(&cfg.EmailVerificationExpiryMinutes, "email-verification-expiry-minutes", 60,
+	cmd.Flags().IntVar(&cfg.EmailVerificationExpiryMinutes, "email-verification-expiry-minutes", cfg.EmailVerificationExpiryMinutes,
 		"Code lifetime shown to users; must match Zitadel's configured lifetime")
-	cmd.Flags().IntVar(&cfg.EmailVerificationUserLookupAttempts, "email-verification-user-lookup-attempts", 5,
+	cmd.Flags().IntVar(&cfg.EmailVerificationUserLookupAttempts, "email-verification-user-lookup-attempts", cfg.EmailVerificationUserLookupAttempts,
 		"Retry count when the verification request arrives before create-user-account has provisioned the Milo User")
-	cmd.Flags().DurationVar(&cfg.EmailVerificationUserLookupBaseWait, "email-verification-user-lookup-base-wait", 200*time.Millisecond,
+	cmd.Flags().DurationVar(&cfg.EmailVerificationUserLookupBaseWait, "email-verification-user-lookup-base-wait", cfg.EmailVerificationUserLookupBaseWait,
 		"Initial backoff between email-verification user lookup retries")
 	cmd.Flags().StringVar(&cfg.ClientCAFile, "client-ca-file", cfg.ClientCAFile,
-		"CA bundle used to verify client certificates (mTLS)")
+		"Filename in the directory that contains the CA bundle used to verify client certificates (mTLS)")
 
 	return cmd
 }
 
+// validateWebhookConfig rejects a configuration that would expose the verification
+// endpoint. Separate from runWebhookServer so it is reachable in a test without a
+// cluster, and so the check cannot drift below something that fails first.
+func validateWebhookConfig(cfg *config.WebhookServerConfig) error {
+	// controller-runtime sets RequireAndVerifyClientCert only when ClientCAName is
+	// non-empty, so an empty --client-ca-file silently serves this endpoint with no
+	// client auth at all. Refuse to start rather than expose it: anyone able to reach
+	// the Service could otherwise have us mail a code of their choosing.
+	if cfg.EmailVerificationTemplate != "" && cfg.ClientCAFile == "" {
+		return fmt.Errorf("--client-ca-file is required when --email-verification-template is set: " +
+			"without it the verification endpoint accepts unauthenticated callers")
+	}
+	return nil
+}
+
 func runWebhookServer(cmd *cobra.Command, cfg *config.WebhookServerConfig) error {
+	if err := validateWebhookConfig(cfg); err != nil {
+		return err
+	}
+
 	logf.SetLogger(zap.New(zap.JSONEncoder()))
 	log := logf.Log.WithName("authentication-webhook")
 
