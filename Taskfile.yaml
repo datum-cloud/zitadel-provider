@@ -153,18 +153,18 @@ tasks:
 
 
   ci:install-external-crds:
-    desc: Install IAM CRDs from Milo
+    desc: Install external CRDs from Milo
     silent: true
     cmds:
       - |
         set -e
-        echo "Installing IAM and Infrastructure CRDs..."
+        echo "Installing external CRDs from milo repository..."
         task test-infra:kubectl -- apply \
           -k https://github.com/milo-os/milo/config/crd/bases/iam
         task test-infra:kubectl -- apply \
-          -k https://github.com/milo-os/milo/config/crd/bases/infrastructure?ref=v0.21.0
+          -k https://github.com/milo-os/milo/config/crd/bases/infrastructure
         task test-infra:kubectl -- apply \
-          -k https://github.com/milo-os/milo/config/crd/bases/resourcemanager?ref=v0.21.0
+          -k https://github.com/milo-os/milo/config/crd/bases/resourcemanager
         echo "Milo CRDs installed."
 
   ci:port-forward:

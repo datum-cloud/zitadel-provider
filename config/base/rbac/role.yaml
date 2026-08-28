@@ -25,6 +25,7 @@ rules:
   - iam.miloapis.com
   resources:
   - serviceaccounts
+  - users
   verbs:
   - create
   - delete
@@ -48,17 +49,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - iam.miloapis.com
-  resources:
-  - users
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - infrastructure.miloapis.com
   resources:

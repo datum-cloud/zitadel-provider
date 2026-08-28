@@ -94,22 +94,22 @@ Environment variables (mounted via Secret/ConfigMap as you prefer):
 
 Follow these steps to run the end-to-end (e2e) tests locally:
 
-1. Create a local Kind cluster:
+1. Setup the CI test environment (Kind cluster, Zitadel, dependencies, external CRDs, and deploy):
 
    ```bash
-   make kind-create
+   task ci:setup
    ```
 
 2. Run the e2e test suite:
 
    ```bash
-   make test-e2e
+   task test:end-to-end
    ```
 
-3. Inspect the controller logs once the tests have finished:
+3. Teardown the test cluster when finished:
 
    ```bash
-   cat test/controller.log
+   task ci:teardown
    ```
 
 ## Zitadel Instance Setup
