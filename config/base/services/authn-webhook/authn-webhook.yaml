@@ -38,6 +38,11 @@ spec:
             - --zitadel-private-key=$(ZITADEL_PRIVATE_KEY_FILE_PATH)
             - --jwt-expiration=$(JWT_EXPIRATION)
             - --metrics-bind-address=$(METRICS_BIND_ADDRESS)
+            - --client-ca-file=$(CLIENT_CA_FILE)
+            - --email-verification-template=$(EMAIL_VERIFICATION_TEMPLATE)
+            - --email-verification-allowed-origins=$(EMAIL_VERIFICATION_ALLOWED_ORIGINS)
+            - --email-verification-expiry-minutes=$(EMAIL_VERIFICATION_EXPIRY_MINUTES)
+            - --notification-namespace=$(NOTIFICATION_NAMESPACE)
           env:
             - name: WEBHOOK_PORT
               value: "8090"
@@ -55,6 +60,35 @@ spec:
               value: "1h"
             - name: METRICS_BIND_ADDRESS
               value: ":8443"
+            # Signup verification mail. The endpoint is OFF here and an overlay
+            # turns it on, because the two values it needs are cluster-specific:
+            # the EmailTemplate name carries a kustomize-generated prefix, and
+            # the origin allowlist is the environment's own auth hostname.
+            #
+            # EMAIL_VERIFICATION_TEMPLATE empty leaves the route unregistered,
+            # so an unconfigured deployment cannot send.
+            - name: EMAIL_VERIFICATION_TEMPLATE
+              value: ""
+            # Empty rejects every returnTo. A missing value must never read as
+            # "allow any host" — this is the phishing guard.
+            - name: EMAIL_VERIFICATION_ALLOWED_ORIGINS
+              value: ""
+            # CLIENT_CA_FILE must stay EMPTY here. It is a filename inside
+            # CERT_DIR, and controller-runtime turns on RequireAndVerifyClientCert
+            # for the WHOLE webhook server the moment it is set — TokenReview
+            # included. Since this base mounts no volumes, a non-empty default
+            # would make every consumer of this bundle fail to start with
+            # "failed to read client CA cert". An overlay sets it alongside the
+            # volume that provides the file.
+            - name: CLIENT_CA_FILE
+              value: ""
+            # Mirrors Zitadel's configured code lifetime and is shown to users.
+            # A copy of state we do not own: if Zitadel's lifetime changes, this
+            # silently starts lying. 60 is what the live event payload reports.
+            - name: EMAIL_VERIFICATION_EXPIRY_MINUTES
+              value: "60"
+            - name: NOTIFICATION_NAMESPACE
+              value: milo-system
           ports:
             - containerPort: 8443
               name: metrics
