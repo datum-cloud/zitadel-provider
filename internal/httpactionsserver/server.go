@@ -205,15 +205,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/actions/passkey-added", s.passkeyAddedHandler)
 	mux.HandleFunc("/v1/actions/passkey-removed", s.passkeyRemovedHandler)
 
-	// No /v1/actions/email-provider route: Zitadel's HTTP email provider was
-	// removed here. On v4.12.2 it accepted activation and the config round-trip
-	// succeeded, but it never actually dispatched a POST — verified live, zero
-	// connection attempts. Signup verification mail is delivered instead via
-	// internal/webhook/emailverification.go, which auth-ui calls with a
-	// return_code obtained directly from Zitadel. If a future Zitadel version
-	// fixes dispatch, the removed receiver is in git history (see the commit
-	// that deleted internal/httpactionsserver/email_provider.go).
-
 	srv := &http.Server{
 		Addr:    s.config.Addr,
 		Handler: mux,

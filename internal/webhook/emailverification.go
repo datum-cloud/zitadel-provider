@@ -144,9 +144,7 @@ func (h *EmailVerificationHandler) originAllowed(u *url.URL) bool {
 // from the same Zitadel event that produced this code, so the User can be moments
 // behind the request.
 //
-// Backoff is linear, not the exponential used by getUserWithRetry in httpactionsserver:
-// a caller is blocked on this response, so the budget is a few seconds rather than the
-// half-minute an async event handler can afford.
+// Backoff is linear rather than exponential: a caller is blocked on this response.
 func (h *EmailVerificationHandler) userWithRetry(ctx context.Context, id string) (*iamv1alpha1.User, error) {
 	attempts := h.cfg.UserLookupAttempts
 	if attempts < 1 {
@@ -217,9 +215,8 @@ func (h *EmailVerificationHandler) createEmail(
 		},
 		Spec: notificationv1alpha1.EmailSpec{
 			TemplateRef: notificationv1alpha1.TemplateReference{Name: h.cfg.TemplateName},
-			// Literal address, where the passkey handlers use UserRef: this handler
-			// already read the User to build the rest of this object, so UserRef
-			// would only have the pipeline resolve the same record a second time.
+			// Literal address: the User is already read above, so UserRef would
+			// only have the pipeline resolve the same record again.
 			Recipient: notificationv1alpha1.EmailRecipient{EmailAddress: user.Spec.Email},
 			Variables: []notificationv1alpha1.EmailVariable{
 				{Name: "UserName", Value: displayName},

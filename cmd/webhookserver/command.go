@@ -70,8 +70,7 @@ func NewAuthenticationWebhookServerCommand(globalConfig *config.GlobalConfig) *c
 }
 
 // validateWebhookConfig rejects a configuration that would expose the verification
-// endpoint. Separate from runWebhookServer so it is reachable in a test without a
-// cluster, and so the check cannot drift below something that fails first.
+// endpoint. Kept out of runWebhookServer so a test can reach it without a cluster.
 func validateWebhookConfig(cfg *config.WebhookServerConfig) error {
 	// controller-runtime sets RequireAndVerifyClientCert only when ClientCAName is
 	// non-empty, so an empty --client-ca-file silently serves this endpoint with no

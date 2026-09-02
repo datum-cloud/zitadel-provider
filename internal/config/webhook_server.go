@@ -25,8 +25,7 @@ type WebhookServerConfig struct {
 	EmailVerificationAllowedOrigins []string
 	// EmailVerificationExpiryMinutes mirrors Zitadel's configured code lifetime. It is
 	// a COPY of state we do not own; if the lifetime changes in Zitadel this number
-	// silently starts lying to users. 60 is what the live event payload reports
-	// ("expiry": 3600000000000 ns) — re-check it against Zitadel before trusting it.
+	// silently starts lying to users.
 	EmailVerificationExpiryMinutes int
 	// EmailVerificationUserLookupAttempts is how many times to retry fetching the
 	// Milo User when the verification request arrives before create-user-account
