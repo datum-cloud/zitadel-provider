@@ -38,6 +38,11 @@ spec:
             - --zitadel-private-key=$(ZITADEL_PRIVATE_KEY_FILE_PATH)
             - --jwt-expiration=$(JWT_EXPIRATION)
             - --metrics-bind-address=$(METRICS_BIND_ADDRESS)
+            - --client-ca-file=$(CLIENT_CA_FILE)
+            - --email-verification-template=$(EMAIL_VERIFICATION_TEMPLATE)
+            - --email-verification-allowed-origins=$(EMAIL_VERIFICATION_ALLOWED_ORIGINS)
+            - --email-verification-expiry-minutes=$(EMAIL_VERIFICATION_EXPIRY_MINUTES)
+            - --notification-namespace=$(NOTIFICATION_NAMESPACE)
           env:
             - name: WEBHOOK_PORT
               value: "8090"
@@ -55,6 +60,19 @@ spec:
               value: "1h"
             - name: METRICS_BIND_ADDRESS
               value: ":8443"
+            # Empty leaves the verification endpoint unregistered; an overlay opts in.
+            - name: EMAIL_VERIFICATION_TEMPLATE
+              value: ""
+            - name: EMAIL_VERIFICATION_ALLOWED_ORIGINS
+              value: ""
+            # Must stay empty: any value turns on client-cert verification for the
+            # whole webhook server, and nothing is mounted here to satisfy it.
+            - name: CLIENT_CA_FILE
+              value: ""
+            - name: EMAIL_VERIFICATION_EXPIRY_MINUTES
+              value: "60"
+            - name: NOTIFICATION_NAMESPACE
+              value: milo-system
           ports:
             - containerPort: 8443
               name: metrics

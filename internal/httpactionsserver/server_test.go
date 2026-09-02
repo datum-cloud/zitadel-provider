@@ -130,6 +130,27 @@ func newTestScheme() *runtime.Scheme {
 	return s
 }
 
+// listProviderEmails lists every Email resource created against the fake
+// client. Shared by handlers that notify via milo Email resources.
+func listProviderEmails(t *testing.T, c client.Client) *notificationv1alpha1.EmailList {
+	t.Helper()
+	var list notificationv1alpha1.EmailList
+	if err := c.List(context.Background(), &list); err != nil {
+		t.Fatalf("list emails: %v", err)
+	}
+	return &list
+}
+
+// varsOf flattens an Email's Spec.Variables into a name->value map for
+// assertions.
+func varsOf(e notificationv1alpha1.Email) map[string]string {
+	out := map[string]string{}
+	for _, v := range e.Spec.Variables {
+		out[v.Name] = v.Value
+	}
+	return out
+}
+
 // findEntry returns the first captured entry with the given message, or nil.
 func findEntry(entries []logEntry, msg string) *logEntry {
 	for i := range entries {
